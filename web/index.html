@@ -1,0 +1,1757 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>中文文件批量改名器</title>
+<style>
+:root{
+  --bg:#0e1014; --panel:#15181f; --panel2:#1b1f27; --line:#252a35;
+  --line2:#313846; --fg:#e5e9f0; --muted:#8b93a4; --dim:#5f6879;
+  --accent:#4c8dff; --accent-d:#2f6fdd; --green:#3ecf8e; --red:#ff6b6b;
+  --yellow:#e8b341; --purple:#a78bfa;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg); color:var(--fg);
+  font:13px/1.5 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+  overflow:hidden;
+}
+button{font-family:inherit;font-size:13px;cursor:pointer;border:none;border-radius:6px}
+input,select{font-family:inherit;font-size:13px}
+
+/* ---------- 布局 ---------- */
+.app{display:flex;flex-direction:column;height:100vh}
+
+header{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 14px;background:var(--panel);
+  border-bottom:1px solid var(--line);flex:0 0 auto;
+}
+.brand{display:flex;align-items:center;gap:8px;margin-right:6px;flex:0 0 auto}
+.brand .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+.brand b{font-size:13.5px;letter-spacing:.3px;font-weight:600}
+.brand span{color:var(--dim);font-size:11px}
+
+.pathbox{flex:1;display:flex;gap:6px;min-width:0}
+.pathbox input{
+  flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line2);
+  color:var(--fg);padding:7px 10px;border-radius:6px;outline:none;
+}
+.pathbox input:focus{border-color:var(--accent)}
+
+.btn{background:var(--panel2);color:var(--fg);border:1px solid var(--line2);padding:7px 13px;white-space:nowrap}
+.btn:hover{background:#232833;border-color:#3d4658}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn.primary:hover{background:var(--accent-d)}
+.btn.ghost{background:transparent;border-color:var(--line2);color:var(--muted)}
+.btn.ghost:hover{color:var(--fg)}
+.btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.btn.sm{padding:4px 9px;font-size:12px}
+.sel{
+  background:var(--panel2);color:var(--fg);border:1px solid var(--line2);
+  padding:6px 8px;border-radius:6px;outline:none;cursor:pointer;font-family:inherit;font-size:12.5px;
+}
+.sel:hover{border-color:#3d4658}
+.sel:focus{border-color:var(--accent)}
+.sel option{background:#1b1f27;color:var(--fg)}
+
+main{flex:1;display:flex;min-height:0}
+
+/* ---------- 左栏规则 ---------- */
+aside{
+  width:302px;flex:0 0 302px;background:var(--panel);
+  border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;
+}
+.aside-head{
+  padding:10px 12px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;flex:0 0 auto;
+}
+.aside-head b{font-size:12px;color:var(--muted);letter-spacing:.6px;font-weight:600}
+.rules{overflow-y:auto;flex:1;padding:6px 0 14px}
+
+.presetbar{display:flex;gap:5px;padding:8px 12px;border-bottom:1px solid var(--line);align-items:center}
+.presel{
+  flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line2);
+  color:var(--fg);padding:4px 6px;border-radius:5px;font-size:11.5px;outline:none;cursor:pointer;
+}
+.presel:focus{border-color:var(--accent)}
+.presel option{background:#1b1f27}
+.tester{padding:8px 12px;border-top:1px solid var(--line);background:#12151b;flex:0 0 auto}
+.tester input{
+  width:100%;background:var(--panel2);border:1px solid var(--line2);color:var(--fg);
+  padding:5px 8px;border-radius:5px;font-size:11.5px;outline:none;
+}
+.tester input:focus{border-color:var(--accent)}
+.testout{
+  margin-top:5px;font-size:11px;color:var(--green);min-height:14px;
+  word-break:break-all;line-height:1.5;white-space:pre-wrap;
+}
+
+.grp{padding:9px 12px 3px;color:var(--dim);font-size:11px;letter-spacing:.8px;font-weight:600}
+.rule{padding:7px 12px;border-left:2px solid transparent;transition:background .12s}
+.rule:hover{background:#191d25}
+.rule.on{border-left-color:var(--accent)}
+.rule-top{display:flex;align-items:flex-start;gap:8px}
+.rule-name{flex:1;font-size:12.5px;line-height:1.35;cursor:pointer;user-select:none}
+.rule-name small{display:block;color:var(--dim);font-size:11px;line-height:1.4;margin-top:2px;font-weight:400}
+.rule:not(.on) .rule-name{color:var(--muted)}
+
+.sw{position:relative;width:30px;height:17px;flex:0 0 auto;margin-top:1px}
+.sw input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:2}
+.sw i{
+  position:absolute;inset:0;background:#2c3340;border-radius:9px;transition:.16s;display:block;
+}
+.sw i::after{
+  content:"";position:absolute;left:2px;top:2px;width:13px;height:13px;
+  border-radius:50%;background:#7b8496;transition:.16s;
+}
+.sw input:checked + i{background:var(--accent)}
+.sw input:checked + i::after{left:15px;background:#fff}
+
+.params{display:none;margin:7px 0 2px 0;padding:8px 9px;background:#11141a;border-radius:6px}
+.rule.on .params{display:block}
+.ract{margin:6px 0 0 38px}
+.prow{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+.prow:last-child{margin-bottom:0}
+.prow label{flex:0 0 auto;color:var(--muted);font-size:11.5px;min-width:70px}
+.prow input[type=text],.prow input[type=number],.prow select{
+  flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line2);
+  color:var(--fg);padding:4px 7px;border-radius:4px;outline:none;
+}
+.prow input[type=number]{max-width:76px}
+.prow input:focus,.prow select:focus{border-color:var(--accent)}
+
+/* ---------- 右侧 ---------- */
+section.view{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+
+.toolbar{
+  display:flex;align-items:center;gap:8px;padding:8px 12px;
+  background:var(--panel2);border-bottom:1px solid var(--line);flex:0 0 auto;flex-wrap:wrap;
+}
+.chk{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:12px;cursor:pointer;user-select:none}
+.chk input{accent-color:var(--accent);cursor:pointer;margin:0}
+.spacer{flex:1}
+.filterbar{
+  display:flex;align-items:center;gap:8px;padding:6px 12px;flex:0 0 auto;
+  border-bottom:1px solid var(--line);background:#10131a;flex-wrap:wrap;
+}
+.filterbar .flabel{font-size:12px;color:var(--fg);font-weight:600}
+.filterbar input{
+  background:var(--panel);border:1px solid var(--line2);color:var(--fg);
+  border-radius:5px;padding:4px 8px;outline:none;font-size:11.5px;width:230px;
+}
+.filterbar input:focus{border-color:var(--accent)}
+.filterbar .fhint{font-size:11px;color:var(--dim)}
+
+.tbl{flex:1;overflow:auto;min-height:0}
+.thead,.row{
+  display:flex;align-items:center;gap:0;
+  padding:0 12px;border-bottom:1px solid #1b1f27;
+}
+.thead{
+  position:sticky;top:0;z-index:3;background:#12151b;
+  border-bottom:1px solid var(--line2);height:30px;
+  color:var(--dim);font-size:11.5px;letter-spacing:.4px;font-weight:600;
+}
+.row{height:44px;padding:0 12px;font-size:12.5px;overflow:hidden}
+.row:hover{background:#141821}
+.row.sel{background:#152033}
+.row.conflict{background:#2a1a1c}
+.row.conflict:hover{background:#33201f}
+.row.invalid{background:#2a2418}
+
+.c-chk{flex:0 0 30px;display:flex;align-items:center}
+.c-chk input{accent-color:var(--accent);cursor:pointer;margin:0}
+.c-old{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);padding-right:10px}
+.c-arw{flex:0 0 26px;color:var(--dim);text-align:center;font-size:12px}
+.c-new{flex:1 1 0;min-width:0;padding-right:10px;display:flex;flex-direction:column;justify-content:center}
+.c-new input{
+  width:100%;background:transparent;border:1px solid transparent;border-radius:4px;
+  color:var(--fg);padding:0 5px;outline:none;font-size:12.5px;height:21px;
+}
+.c-new input:hover{border-color:#2b3240;background:#11141a}
+.c-new input:focus{border-color:var(--accent);background:#0d1016;box-shadow:0 0 0 2px rgba(76,141,255,.12)}
+.row.unchanged .c-new input{color:var(--dim)}
+.c-st{flex:0 0 74px;text-align:right;font-size:11px}
+
+.tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10.5px;font-weight:600}
+.tag.ok{background:rgba(62,207,142,.13);color:var(--green)}
+.tag.un{background:rgba(139,147,164,.13);color:var(--muted)}
+.tag.cf{background:rgba(255,107,107,.15);color:var(--red)}
+.tag.iv{background:rgba(232,179,65,.15);color:var(--yellow)}
+
+.note{
+  color:var(--dim);font-size:10.5px;line-height:14px;height:14px;margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:5px;
+}
+
+footer{
+  display:flex;align-items:center;gap:12px;padding:9px 14px;
+  background:var(--panel);border-top:1px solid var(--line);flex:0 0 auto;
+}
+.stat{display:flex;gap:14px;color:var(--muted);font-size:12px}
+.stat b{color:var(--fg);font-weight:600}
+.stat .g{color:var(--green)}
+.stat .r{color:var(--red)}
+.stat .y{color:var(--yellow)}
+
+.empty{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:var(--dim);gap:10px;font-size:13px;
+}
+.empty .big{font-size:34px;opacity:.25}
+.empty code{background:var(--panel2);padding:2px 7px;border-radius:4px;color:var(--muted);font-size:12px}
+
+/* 拖放 */
+.drophint{
+  position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(76,141,255,.10);border:2px dashed var(--accent);
+  color:var(--accent);font-size:15px;font-weight:600;pointer-events:none;z-index:20;
+}
+.drophint.show{display:flex}
+
+/* ---------- 弹层 ---------- */
+.mask{
+  position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;
+  align-items:center;justify-content:center;z-index:50;backdrop-filter:blur(2px);
+}
+.mask.show{display:flex}
+.modal{
+  background:var(--panel);border:1px solid var(--line2);border-radius:10px;
+  width:min(600px,92vw);max-height:82vh;display:flex;flex-direction:column;
+  box-shadow:0 18px 50px rgba(0,0,0,.55);
+}
+.modal h3{margin:0;padding:14px 16px;font-size:14px;border-bottom:1px solid var(--line);font-weight:600}
+.modal .body{padding:14px 16px;overflow:auto;flex:1;font-size:12.5px;color:var(--muted);line-height:1.75}
+.modal .foot{padding:11px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+.warn{background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.28);color:#ffa8a8;
+  padding:9px 11px;border-radius:6px;margin-bottom:11px;font-size:12px;line-height:1.6}
+.kv{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed #232833}
+.kv:last-child{border:none}
+.kv b{color:var(--fg);font-weight:600}
+
+.toast{
+  position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(14px);
+  background:#1e2430;border:1px solid var(--line2);color:var(--fg);
+  padding:9px 16px;border-radius:7px;font-size:12.5px;opacity:0;
+  transition:.22s;pointer-events:none;z-index:99;box-shadow:0 8px 26px rgba(0,0,0,.4);
+  max-width:70vw;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{border-color:rgba(255,107,107,.5);color:#ffb3b3}
+.toast.ok{border-color:rgba(62,207,142,.45);color:#8ee9bf}
+
+/* 历史列表 */
+.jitem{
+  padding:9px 12px;border:1px solid var(--line);border-radius:7px;margin-bottom:7px;
+  display:flex;align-items:center;gap:10px;background:var(--panel2);
+}
+.jitem .jmeta{flex:1;min-width:0}
+.jitem .jt{font-size:12.5px;color:var(--fg)}
+.jitem .js{font-size:11px;color:var(--dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* AI 面板 */
+details.cfg{border:1px solid var(--line);border-radius:7px;background:#11141a;margin-bottom:12px}
+details.cfg summary{
+  padding:8px 11px;cursor:pointer;font-size:12px;color:var(--muted);
+  user-select:none;outline:none;
+}
+details.cfg summary:hover{color:var(--fg)}
+details.cfg .inner{padding:0 11px 11px}
+.frow{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.frow label{flex:0 0 84px;color:var(--dim);font-size:11.5px}
+.frow input,.frow textarea{
+  flex:1;min-width:0;background:var(--panel2);border:1px solid var(--line2);
+  color:var(--fg);padding:6px 9px;border-radius:5px;outline:none;font-family:inherit;font-size:12px;
+}
+.frow input:focus,.frow textarea:focus{border-color:var(--accent)}
+.frow textarea{resize:vertical;min-height:56px;line-height:1.5}
+.ai-ins{
+  width:100%;background:var(--panel2);border:1px solid var(--line2);color:var(--fg);
+  padding:9px 11px;border-radius:6px;outline:none;font-family:inherit;font-size:12.5px;
+  resize:vertical;min-height:62px;line-height:1.55;
+}
+.ai-ins:focus{border-color:var(--accent)}
+.hintline{color:var(--dim);font-size:11.5px;margin:6px 0 0;line-height:1.6}
+
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#2b3240;border-radius:5px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:#3a4356}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <b>中文文件批量改名器</b><br>
+        <span>先预览 · 再确认 · 可回滚</span>
+      </div>
+    </div>
+    <div class="pathbox">
+      <input id="path" placeholder="输入或粘贴目录路径，例如 D:\资料\2026年会议" spellcheck="false">
+      <button class="btn" onclick="pickFolder()">浏览…</button>
+      <button class="btn" onclick="scan()">扫描</button>
+      <button class="btn ghost" onclick="showAuth()">目录授权</button>
+      <button class="btn ghost" onclick="showShell()" title="把本工具加进资源管理器右键菜单">右键菜单</button>
+    </div>
+  </header>
+
+  <main>
+    <aside>
+      <div class="aside-head">
+        <b>处理规则</b>
+        <div style="display:flex;gap:5px">
+          <button class="btn sm ghost" onclick="resetRules(true)">全开</button>
+          <button class="btn sm ghost" onclick="resetRules(false)">全关</button>
+        </div>
+      </div>
+      <div class="presetbar">
+        <select id="presetSel" class="presel" onchange="loadPreset()">
+          <option value="">— 规则方案 —</option>
+        </select>
+        <button class="btn sm" onclick="savePreset()" title="把当前规则组合存成方案">存</button>
+        <button class="btn sm ghost" onclick="delPreset()" title="删除当前方案">删</button>
+      </div>
+      <div class="rules" id="rules"></div>
+      <div class="tester">
+        <input id="testName" placeholder="试一个名字，看规则效果…" spellcheck="false">
+        <div id="testOut" class="testout"></div>
+      </div>
+    </aside>
+
+    <section class="view">
+      <div class="toolbar">
+        <label class="chk"><input type="checkbox" id="recursive" onchange="scan()"> 含子目录</label>
+        <label class="chk"><input type="checkbox" id="includeDirs"> 包含文件夹</label>
+        <label class="chk"><input type="checkbox" id="lowerExt" onchange="schedulePreview()"> 扩展名小写</label>
+        <label class="chk"><input type="checkbox" id="autoDedupe" onchange="schedulePreview()"> 冲突自动加序号</label>
+        <div class="spacer"></div>
+        <input id="kw" class="btn" style="background:var(--panel);width:150px;color:var(--fg)"
+               placeholder="按名称筛选…" oninput="filterRows()">
+
+        <select id="sortBy" class="sel" onchange="preview()" title="排序决定序号的先后顺序">
+          <option value="name">按名称</option>
+          <option value="mtime">按修改时间</option>
+          <option value="size">按大小</option>
+          <option value="type">按类型</option>
+          <option value="none">不排序</option>
+        </select>
+        <button class="btn ghost" id="sortDir" onclick="toggleSort()" title="切换升序/降序">↑</button>
+
+        <select id="target" class="sel" onchange="preview()" title="规则作用在哪一部分">
+          <option value="name">只改主名</option>
+          <option value="ext">只改扩展名</option>
+          <option value="both">整名一起改</option>
+        </select>
+
+        <button class="btn ghost" onclick="showImport()" title="粘贴或导入 原名→新名 对照表">导入对照表</button>
+        <button class="btn ghost" onclick="exportList()" title="导出勾选条目的新旧名对照">导出清单</button>
+
+        <button class="btn ghost" onclick="checkAll(true)">全选</button>
+        <button class="btn ghost" onclick="checkAll(false)">全不选</button>
+        <button class="btn ghost" onclick="showAll()" title="取消拖放形成的聚焦，显示整个目录">显示全部</button>
+        <button class="btn ghost" onclick="clearList()" title="清空列表，重新来过">清空列表</button>
+        <button class="btn" onclick="preview()">↻ 生成预览</button>
+        <button class="btn" onclick="openAI()">✦ AI 语义</button>
+        <button class="btn ghost" onclick="showJournals()">历史与回滚</button>
+      </div>
+
+      <div class="filterbar">
+        <span class="flabel">扫描筛选</span>
+        <input id="includePat" placeholder="只包含：*.pdf;*.docx（留空=全部）" spellcheck="false">
+        <input id="excludePat" placeholder="排除：~$*;*.tmp" spellcheck="false">
+        <button class="btn sm ghost" onclick="scan()">应用并重扫</button>
+        <span class="fhint">仅筛文件，目录不受影响；支持 * ?，分号隔开</span>
+      </div>
+
+      <div class="thead">
+        <div class="c-chk"><input type="checkbox" id="hchk" onchange="checkAll(this.checked)"></div>
+        <div class="c-old">原文件名</div>
+        <div class="c-arw">→</div>
+        <div class="c-new">新文件名（可直接改）</div>
+        <div class="c-st">状态</div>
+      </div>
+
+      <div class="tbl" id="tbl">
+        <div class="empty" id="emptyHint">
+          <div class="big">⌸</div>
+          <div>扫描目录，或把文件直接拖到这里</div>
+          <div style="font-size:11.5px;line-height:1.9">
+            也可以 Shift+右键文件选「复制为路径」，回到页面 Ctrl+V 粘贴<br>
+            （网页拿不到拖拽文件的完整路径，粘贴路径最可靠）
+          </div>
+        </div>
+      </div>
+
+      <div id="dropHint" class="drophint">松开即可加入待改名列表</div>
+
+      <footer>
+        <div class="stat" id="stat">
+          <span>待改名 <b id="s-change">0</b></span>
+          <span>无变化 <b id="s-un">0</b></span>
+          <span class="r">冲突 <b id="s-cf">0</b></span>
+          <span class="y">非法 <b id="s-iv">0</b></span>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn primary" id="btnExec" onclick="askExecute()" disabled>执行改名</button>
+      </footer>
+    </section>
+  </main>
+</div>
+
+<!-- 执行确认 -->
+<div class="mask" id="maskExec">
+  <div class="modal">
+    <h3>确认执行改名</h3>
+    <div class="body">
+      <div class="warn">⚠ 这是对磁盘的真实写操作。执行前请确认已生成预览并逐条检查过。</div>
+      <div class="kv"><span>目录</span><b id="e-root" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></b></div>
+      <div class="kv"><span>将改名</span><b id="e-count"></b></div>
+      <div class="kv"><span>映射日志</span><b>自动保存，可一键回滚</b></div>
+      <div style="margin-top:12px;color:var(--muted)">系统会先把所有文件改成临时名，再改成目标名，因此 <code>a→b、b→a</code> 这类互换不会互相覆盖。</div>
+    </div>
+    <div class="foot">
+      <button class="btn ghost" onclick="closeMask('maskExec')">取消</button>
+      <button class="btn primary" onclick="doExecute()">确认执行</button>
+    </div>
+  </div>
+</div>
+
+<!-- 目录授权 -->
+<div class="mask" id="maskAuth">
+  <div class="modal">
+    <h3>目录授权</h3>
+    <div class="body">
+      <div style="margin-bottom:10px">只有授权过的目录才能被扫描和改名，避免误操作整个磁盘。添加父目录后，其子目录自动获得授权。</div>
+      <div id="authList" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:6px">
+        <input id="authPath" style="flex:1;background:var(--panel2);border:1px solid var(--line2);color:var(--fg);padding:6px 9px;border-radius:5px;outline:none" placeholder="要授权的目录路径">
+        <button class="btn" onclick="pickFolder(true)">浏览…</button>
+        <button class="btn primary" onclick="addRoot()">添加</button>
+      </div>
+    </div>
+    <div class="foot"><button class="btn" onclick="closeMask('maskAuth')">关闭</button></div>
+  </div>
+</div>
+
+<!-- 历史 -->
+<div class="mask" id="maskHist">
+  <div class="modal" style="width:min(720px,94vw)">
+    <h3>历史改名记录</h3>
+    <div class="body" id="histBody" style="color:var(--muted)"></div>
+    <div class="foot"><button class="btn" onclick="closeMask('maskHist')">关闭</button></div>
+  </div>
+</div>
+
+<!-- 右键菜单 -->
+<div class="mask" id="maskShell">
+  <div class="modal" style="width:min(620px,94vw)">
+    <h3>资源管理器右键菜单</h3>
+    <div class="body">
+      <div class="kv"><span>当前状态</span><b id="shState">读取中…</b></div>
+      <div style="margin:11px 0 4px;color:var(--fg)">装好之后，在资源管理器里：</div>
+      <ul style="margin:0;padding-left:20px;color:var(--muted);line-height:1.85">
+        <li><b>右键文件夹</b> → 打开本工具并自动扫描该目录</li>
+        <li><b>文件夹空白处右键</b> → 同上</li>
+        <li><b>右键单个文件</b> → 直接把该文件加入待改名列表</li>
+      </ul>
+      <p class="hintline">
+        写入位置是 <code>HKEY_CURRENT_USER\Software\Classes</code>，
+        <b>不需要管理员权限</b>，所以换台电脑也能用。
+        右键的目录会自动加入授权白名单，不用再手工添加。
+      </p>
+      <p class="hintline" id="shInfo"></p>
+    </div>
+    <div class="foot">
+      <button class="btn ghost" onclick="closeMask('maskShell')">关闭</button>
+      <button class="btn ghost" onclick="shellDo('uninstall')">卸载</button>
+      <button class="btn primary" onclick="shellDo('install')">安装右键菜单</button>
+    </div>
+  </div>
+</div>
+
+<!-- 噪声词库 -->
+<div class="mask" id="maskNoise">
+  <div class="modal" style="width:min(640px,94vw)">
+    <h3>噪声词库</h3>
+    <div class="body">
+      <div style="margin-bottom:9px">
+        用<b>空格</b>分隔（换行、逗号也认）。<b>凡是进库的词一律从文件名里清除。</b>
+        可以直接从别处复制一整串粘进来。
+      </div>
+      <textarea id="noiseText" class="ai-ins" style="min-height:200px" spellcheck="false"
+        placeholder="副本 拷贝 最终版 新建 "></textarea>
+      <p class="hintline" id="noiseHint"></p>
+      <p class="hintline">
+        提示：英文词按<b>整词</b>匹配，所以 <code>temp</code> 不会把 <code>template</code> 里的 temp 吃掉。
+        单字词（如「的」「一」）极易误伤正常文件名，加之前想清楚。
+      </p>
+    </div>
+    <div class="foot">
+      <button class="btn ghost" onclick="restoreNoise()">恢复默认</button>
+      <div style="flex:1"></div>
+      <button class="btn ghost" onclick="closeMask('maskNoise')">取消</button>
+      <button class="btn primary" onclick="saveNoise()">保存并重算</button>
+    </div>
+  </div>
+</div>
+
+<!-- 导入对照表 -->
+<div class="mask" id="maskImp">
+  <div class="modal" style="width:min(680px,94vw)">
+    <h3>导入改名对照表</h3>
+    <div class="body">
+      <div style="margin-bottom:8px">
+        每行一条，原名与新名之间用<b>制表符或逗号</b>分隔。可以直接从 Excel 复制粘贴过来。
+      </div>
+      <textarea id="impText" class="ai-ins" style="min-height:170px" spellcheck="false"
+        placeholder="旧名称.docx	新名称.docx&#10;会议纪要(1).docx	2026-10-29_会议纪要.doc"></textarea>
+      <label class="chk" style="margin-top:10px">
+        <input type="checkbox" id="impByOrder"> 按顺序对应：不看原名，第 N 行配第 N 个勾选项
+      </label>
+      <p class="hintline">
+        默认按原文件名匹配（找不到就跳过）。新名若没写扩展名，会自动补上原扩展名。
+        只对当前<b>已勾选</b>的条目生效，结果先进预览表，确认后才写盘。
+      </p>
+    </div>
+    <div class="foot">
+      <button class="btn ghost" onclick="closeMask('maskImp')">取消</button>
+      <button class="btn primary" onclick="applyImport()">应用到预览</button>
+    </div>
+  </div>
+</div>
+
+<!-- AI 语义 -->
+<div class="mask" id="maskAI">
+  <div class="modal" style="width:min(700px,94vw)">
+    <h3>AI 语义改名</h3>
+    <div class="body">
+      <div id="aiCfgWarn" class="warn" style="display:none">
+        模型尚未配置。规则引擎不依赖它，可以完全不用；想用就填下面的地址和模型名。
+        支持 OpenAI 兼容接口：Ollama 本地、DeepSeek、通义、Kimi、硅基流动都行。
+      </div>
+
+      <details class="cfg" id="aiCfg">
+        <summary>模型设置</summary>
+        <div class="inner">
+          <div class="frow"><label>接口地址</label>
+            <input id="aiBase" placeholder="http://127.0.0.1:11434/v1 或 https://api.deepseek.com/v1"></div>
+          <div class="frow"><label>模型名</label>
+            <input id="aiModel" placeholder="qwen2.5:7b / deepseek-chat / qwen-plus"></div>
+          <div class="frow"><label>API Key</label>
+            <input id="aiKey" type="password" autocomplete="off">
+            <button class="btn sm ghost" onclick="aiPing()">测试</button></div>
+          <div class="frow"><label>系统提示词</label>
+            <textarea id="aiPrompt" style="min-height:90px"></textarea></div>
+          <label class="chk" style="margin-top:4px">
+            <input type="checkbox" id="aiEnabled"> 启用（保存后按钮才会调用模型）
+          </label>
+        </div>
+      </details>
+
+      <div style="margin:2px 0 7px;color:var(--fg);font-size:12.5px">本次要求（可留空，留空则只用系统提示词）</div>
+      <textarea id="aiIns" class="ai-ins" spellcheck="false"
+        placeholder="例如：给这些文件起规范的中文标题，日期放最前面，保留单位名称，去掉「副本」「最终版」"></textarea>
+
+      <label class="chk" style="margin-top:10px">
+        <input type="checkbox" id="aiContent"> 读取文件内容辅助起标题（.docx / .pptx / .xlsx / .txt，纯本地解析）
+      </label>
+      <p class="hintline">
+        只对当前勾选的条目生效。返回结果会先填进预览表，你核对、手工修正之后再点「执行改名」，
+        模型不会直接碰磁盘。
+      </p>
+    </div>
+    <div class="foot">
+      <button class="btn ghost" onclick="closeMask('maskAI')">取消</button>
+      <button class="btn" onclick="saveAICfg()">保存设置</button>
+      <button class="btn primary" onclick="aiSuggest()">生成建议</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+const S = {
+  state: null,
+  root: '',
+  rows: [],
+  enabled: {},
+  params: {},
+  timer: null,
+  loading: false,
+  sortDesc: false,
+  presets: [],
+  scanSeq: 0,
+  previewSeq: 0,
+  sid: '',
+};
+
+// 服务端 max_scan 默认 5000；这里不再二次截断，否则“扫描到了却永远改不到”。
+const renderedRows = () => S.rows;
+const executableRows = () => renderedRows().filter(r => r.status === 'ok' && r.selected);
+
+/* ---------------- 基础 ---------------- */
+const $ = id => document.getElementById(id);
+
+function toast(msg, kind){
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (kind ? ' ' + kind : '');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => { t.className = 'toast'; }, 3200);
+}
+
+async function api(path, body){
+  const opt = body === undefined ? {} : {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  };
+  const r = await fetch(path, opt);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return await r.json();
+}
+
+function closeMask(id){ $(id).classList.remove('show'); }
+function openMask(id){ $(id).classList.add('show'); }
+
+function ensureState(){
+  if(S.state) return true;
+  toast('尚未连接本地服务，请重新打开页面', 'err');
+  return false;
+}
+
+function handleStale(r){
+  if(!r || !r.stale) return false;
+  S.rows = [];
+  S.sid = '';
+  renderRows();
+  updateStatFromRows();
+  toast(r.error || '清单已被另一个页面更新，请重新扫描', 'err');
+  return true;
+}
+
+/* ---------------- 初始化 ---------------- */
+async function boot(){
+  try{
+    S.state = await api('/api/state');
+  }catch(e){
+    toast('无法连接本地服务：' + e.message, 'err');
+    return;
+  }
+  S.enabled = Object.assign({}, S.state.default_enabled);
+  S.params = JSON.parse(JSON.stringify(S.state.default_params));
+  $('lowerExt').checked = !!S.state.lower_ext;
+  renderRules();
+  renderAuth();
+  loadPresets();
+}
+
+function renderRules(){
+  const box = $('rules');
+  box.innerHTML = '';
+  let lastGroup = '';
+  for(const r of S.state.rules){
+    if(r.group !== lastGroup){
+      lastGroup = r.group;
+      const g = document.createElement('div');
+      g.className = 'grp';
+      g.textContent = r.group;
+      box.appendChild(g);
+    }
+    const on = !!S.enabled[r.id];
+    const el = document.createElement('div');
+    el.className = 'rule' + (on ? ' on' : '');
+    el.dataset.id = r.id;
+
+    let phtml = '';
+    if(r.params && r.params.length){
+      for(const p of r.params){
+        if(p.type === 'note'){
+          phtml += `<div style="color:var(--dim);font-size:11px;line-height:1.5;
+                     margin:2px 0 6px;white-space:normal">${esc(p.label)}</div>`;
+          continue;
+        }
+        const v = (S.params[r.id] || {})[p.key];
+        let field = '';
+        if(p.type === 'bool'){
+          field = `<input type="checkbox" data-r="${r.id}" data-k="${p.key}" ${v ? 'checked' : ''}>`;
+        }else if(p.type === 'select'){
+          const opts = (p.options || []).map(o => {
+            const [val, label] = o;
+            return `<option value="${esc(val)}" ${String(v) === String(val) ? 'selected' : ''}>${esc(label)}</option>`;
+          }).join('');
+          field = `<select data-r="${r.id}" data-k="${p.key}">${opts}</select>`;
+        }else if(p.type === 'int'){
+          field = `<input type="number" data-r="${r.id}" data-k="${p.key}" value="${esc(v ?? '')}"
+                   min="${p.min ?? ''}" max="${p.max ?? ''}">`;
+        }else{
+          field = `<input type="text" data-r="${r.id}" data-k="${p.key}" value="${esc(v ?? '')}">`;
+        }
+        phtml += `<div class="prow"><label>${esc(p.label)}</label>${field}</div>`;
+      }
+    }
+
+    el.innerHTML = `
+      <div class="rule-top">
+        <label class="sw"><input type="checkbox" ${on ? 'checked' : ''} data-toggle="${r.id}"><i></i></label>
+        <div class="rule-name">${esc(r.name)}<small>${esc(r.desc)}</small></div>
+      </div>
+      ${r.action ? `<button class="btn sm ghost ract" data-act="${esc(r.action.type)}">${esc(r.action.label)}</button>` : ''}
+      ${phtml ? `<div class="params">${phtml}</div>` : ''}`;
+    box.appendChild(el);
+  }
+
+  box.querySelectorAll('[data-act]').forEach(b => {
+    b.addEventListener('click', e => {
+      if(e.target.dataset.act === 'edit_noise') openNoise();
+    });
+  });
+
+  box.querySelectorAll('[data-toggle]').forEach(cb => {
+    cb.addEventListener('change', e => {
+      const id = e.target.dataset.toggle;
+      S.enabled[id] = e.target.checked;
+      e.target.closest('.rule').classList.toggle('on', e.target.checked);
+      schedulePreview();
+    });
+  });
+  box.querySelectorAll('[data-r]').forEach(inp => {
+    inp.addEventListener('change', e => {
+      const rid = e.target.dataset.r, key = e.target.dataset.k;
+      let v = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+      if(e.target.type === 'number') v = parseInt(v || '0', 10);
+      S.params[rid] = S.params[rid] || {};
+      S.params[rid][key] = v;
+      schedulePreview();
+    });
+  });
+}
+
+function resetRules(on){
+  if(!ensureState()) return;
+  for(const r of S.state.rules) S.enabled[r.id] = on;
+  renderRules();
+  schedulePreview();
+}
+
+/* ---------------- 目录授权 ---------------- */
+function renderAuth(){
+  const box = $('authList');
+  const roots = S.state.trusted_roots || [];
+  if(!roots.length){
+    box.innerHTML = '<div style="color:var(--dim);padding:6px 0">还没有授权任何目录。</div>';
+    return;
+  }
+  // 用 data-下标 + 事件监听，不要拼内联 onclick：
+  // 路径里可能出现单引号，拼进 JS 字符串会破坏语法，也是个注入点
+  box.innerHTML = roots.map((p, i) => `
+    <div class="kv"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:430px">${esc(p)}</span>
+    <button class="btn sm ghost" data-rm="${i}">移除</button></div>`).join('');
+  box.querySelectorAll('[data-rm]').forEach(b => {
+    b.addEventListener('click', () => removeRoot(roots[+b.dataset.rm]));
+  });
+}
+
+function showAuth(){ if(!ensureState()) return; renderAuth(); openMask('maskAuth'); }
+
+async function addRoot(){
+  const p = $('authPath').value.trim();
+  if(!p) return toast('请输入目录路径', 'err');
+  try{
+    const r = await api('/api/roots/add', {path: p});
+    if(!r.ok) return toast(r.error || '授权失败', 'err');
+    S.state.trusted_roots = r.trusted_roots;
+    renderAuth();
+    $('authPath').value = '';
+    toast('已授权', 'ok');
+    if(!$('path').value) $('path').value = p;
+  }catch(e){ toast('授权失败：' + e.message, 'err'); }
+}
+
+async function removeRoot(p){
+  try{
+    const r = await api('/api/roots/remove', {path: p});
+    if(!r.ok) return toast(r.error || '移除失败', 'err');
+    S.state.trusted_roots = r.trusted_roots;
+    renderAuth();
+  }catch(e){ toast('移除授权失败：' + e.message, 'err'); }
+}
+
+async function pickFolder(forAuth){
+  toast('请在弹出的窗口里选择目录…');
+  try{
+    const r = await api('/api/pick-folder', {});
+    if(!r.ok){ toast(r.error || '未选择', 'err'); return; }
+    if(forAuth){ $('authPath').value = r.path; }
+    else {
+      $('path').value = r.path;
+      // 判断是否已被父目录覆盖，必须比对到目录边界，
+      // 否则授权了 D:\资料 时选 D:\资料备份 会被误判成"已授权"
+      const norm = s => String(s).toLowerCase().replace(/[\\/]+$/, '');
+      const pn = norm(r.path);
+      const covered = (S.state.trusted_roots || []).some(t => {
+        const tn = norm(t);
+        return pn === tn || pn.startsWith(tn + '\\');
+      });
+      if(!covered){
+        const a = await api('/api/roots/add', {path: r.path});
+        if(!a.ok) return toast(a.error || '授权失败', 'err');
+        S.state.trusted_roots = a.trusted_roots;
+        renderAuth();
+      }
+      await scan();
+    }
+  }catch(e){ toast('选择目录失败：' + e.message, 'err'); }
+}
+
+/* ---------------- 扫描 / 预览 ---------------- */
+async function scan(silent){
+  const root = $('path').value.trim();
+  if(!root) return toast('请先选择目录', 'err');
+  const seq = ++S.scanSeq;
+  S.previewSeq++;                 // 新扫描开始后，旧预览响应一律作废
+  S.loading = true;
+  try{
+    const r = await api('/api/scan', {
+      root, recursive: $('recursive').checked, include_dirs: $('includeDirs').checked,
+      keyword: '', include: $('includePat') ? $('includePat').value : '',
+      exclude: $('excludePat') ? $('excludePat').value : ''
+    });
+    if(seq !== S.scanSeq) return;
+    if(!r.ok){
+      if(r.need_auth){
+        $('authPath').value = root;
+        showAuth();
+        toast('该目录未授权，已帮你填好路径，点「添加」即可', 'err');
+      }else{
+        toast(r.error || '扫描失败', 'err');
+      }
+      return;
+    }
+    S.root = r.root;
+    S.sid = r.sid || '';
+    if(!silent) toast(`扫描到 ${r.count} 项` + (r.truncated ? '（已达上限，仅显示部分）' : ''), 'ok');
+    if(r.count){
+      await preview();
+    }else{
+      S.previewSeq++;
+      S.rows = [];
+      renderRows();
+      updateStatFromRows();
+    }
+  }catch(e){
+    if(seq === S.scanSeq) toast('扫描失败：' + e.message, 'err');
+  }finally{
+    if(seq === S.scanSeq) S.loading = false;
+  }
+}
+
+function schedulePreview(){
+  clearTimeout(S.timer);
+  S.timer = setTimeout(() => { if(S.root) preview(); }, 320);
+  // 规则一变，测试器也跟着刷新
+  if($('testName') && $('testName').value) scheduleTest();
+}
+
+async function preview(){
+  if(!S.root) return;
+  const seq = ++S.previewSeq;
+  try{
+    const r = await api('/api/preview', {
+      sid: S.sid,
+      enabled: S.enabled,
+      params: S.params,
+      lower_ext: $('lowerExt').checked,
+      auto_dedupe: $('autoDedupe').checked,
+      sort_by: $('sortBy').value,
+      sort_desc: S.sortDesc,
+      target: $('target').value
+    });
+    if(seq !== S.previewSeq) return;
+    if(handleStale(r)) return;
+    if(!r.ok){ toast(r.error || '预览失败', 'err'); return; }
+    S.sid = r.sid || S.sid;
+    // 重新预览不能把用户手动取消的勾选全部恢复；按路径继承，只有仍可改的行保留。
+    const prev = new Map(S.rows.map(x => [x.path, !!x.selected]));
+    S.rows = r.rows.map(row => Object.assign(row, {
+      selected: prev.has(row.path)
+        ? (prev.get(row.path) && row.status === 'ok')
+        : (row.selected && row.status === 'ok'),
+      _previewName: row.new_name,
+      _previewStatus: row.status,
+      _previewReason: row.reason || ''
+    }));
+    renderRows();
+    updateStatFromRows();
+  }catch(e){
+    if(seq === S.previewSeq) toast('预览失败：' + e.message, 'err');
+  }
+}
+
+/* ---------------- 表格 ---------------- */
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function nameError(name){
+  if(!name || !name.trim()) return '文件名为空';
+  if(/[\\/:*?"<>|\x00-\x1F]/.test(name)) return '含 Windows 非法字符';
+  if(name.startsWith(' ')) return '开头不能是空格';
+  const stem = name.split('.')[0].trim();
+  // 与后端 validate.py 对齐，包含 CONIN$/CONOUT$ 和 COM¹/LPT² 等 Windows 变体。
+  if(/^(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM(?:[1-9]|¹|²|³)|LPT(?:[1-9]|¹|²|³))$/i.test(stem)){
+    return '与系统保留名冲突';
+  }
+  if(/[ .]$/.test(name)) return '结尾不能是空格或句点';
+  if(name.length > 255) return '名称过长（超过 255 字符）';
+  return '';
+}
+
+// 手工编辑、对照表和 AI 共用：先校验单名，再按目录检查同批重名。
+function revalidateRows(changedRows){
+  const changed = changedRows || new Set();
+  const groups = new Map();
+  for(const r of S.rows){
+    if(nameError(r.new_name)) continue;
+    const key = String(r.dir || '').toLowerCase() + '\0' + String(r.new_name).toLowerCase();
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  for(const r of S.rows){
+    const oldStatus = r.status, oldReason = r.reason || '', oldSelected = !!r.selected;
+    const err = nameError(r.new_name);
+    const key = String(r.dir || '').toLowerCase() + '\0' + String(r.new_name).toLowerCase();
+    const duplicate = !err && (groups.get(key) || []).length > 1;
+    r.selected = false;
+    if(r.new_name === r.old_name){
+      r.status = 'unchanged';
+      r.reason = '与原名相同';
+    }else if(err){
+      r.status = 'invalid';
+      r.reason = err;
+    }else if(duplicate){
+      r.status = 'conflict';
+      r.reason = '同批内有 ' + groups.get(key).length + ' 个文件重名';
+    }else if(r.new_name === r._previewName && r._previewStatus === 'conflict'
+             && r._previewReason === '目标名已存在'){
+      // 前端无法探测磁盘；服务端已发现的现存目标冲突不能在校验时丢掉。
+      r.status = 'conflict';
+      r.reason = r._previewReason;
+    }else{
+      r.status = 'ok';
+      if(changed.has(r) || (oldStatus === 'conflict' && oldReason.startsWith('同批内'))){
+        r.selected = true;
+      }else{
+        r.selected = oldStatus === 'ok' && oldSelected;
+      }
+      if(!changed.has(r) && oldStatus === 'conflict' && oldReason.startsWith('同批内')){
+        r.reason = r.new_name === r._previewName ? r._previewReason : '手工修改';
+      }
+    }
+  }
+}
+
+function rowTag(status){
+  return status === 'ok' ? '<span class="tag ok">可改</span>'
+    : status === 'unchanged' ? '<span class="tag un">无变化</span>'
+    : status === 'conflict' ? '<span class="tag cf">冲突</span>'
+    : '<span class="tag iv">非法</span>';
+}
+
+function paintRow(el, r){
+  el.className = 'row ' + r.status + (r.selected ? ' sel' : '');
+  const cb = el.querySelector('.c-chk input[data-id]');
+  cb.checked = !!r.selected;
+  cb.disabled = r.status !== 'ok';
+  el.querySelector('.c-st').innerHTML = rowTag(r.status);
+  const noteText = [r.reason, (r.notes || []).join(' · ')].filter(Boolean).join(' · ');
+  const input = el.querySelector('[data-edit]');
+  input.title = noteText;
+  let note = el.querySelector('.note');
+  if(noteText && !note){
+    note = document.createElement('div');
+    note.className = 'note';
+    input.insertAdjacentElement('afterend', note);
+  }
+  if(note){
+    note.textContent = noteText;
+    note.title = noteText;
+    if(!noteText) note.remove();
+  }
+}
+
+function refreshRenderedRows(){
+  const byId = new Map(S.rows.map(r => [r.id, r]));
+  document.querySelectorAll('#tbl .row').forEach(el => {
+    const row = byId.get(el.dataset.id);
+    if(row) paintRow(el, row);
+  });
+}
+
+function rowVisible(r){
+  const kw = $('kw').value.trim().toLowerCase();
+  return !kw || String(r.old_name).toLowerCase().includes(kw)
+    || String(r.new_name).toLowerCase().includes(kw);
+}
+
+function syncHeaderCheckbox(){
+  const selectable = renderedRows().filter(r => r.status === 'ok' && rowVisible(r));
+  const n = selectable.filter(r => r.selected).length;
+  $('hchk').checked = selectable.length > 0 && n === selectable.length;
+  $('hchk').indeterminate = n > 0 && n < selectable.length;
+}
+
+function renderRows(){
+  const tbl = $('tbl');
+  S.rows.forEach(r => { if(r.status !== 'ok') r.selected = false; });
+  if(!S.rows.length){
+    tbl.innerHTML = `<div class="empty"><div class="big">∅</div><div>该目录下没有符合条件的文件</div></div>`;
+    syncHeaderCheckbox();
+    refreshExecBtn();
+    filterRows();
+    return;
+  }
+  const list = renderedRows();
+  const frag = document.createDocumentFragment();
+
+  for(const r of list){
+    const div = document.createElement('div');
+    div.className = 'row ' + r.status + (r.selected ? ' sel' : '');
+    div.dataset.id = r.id;
+    div.dataset.name = (r.old_name + '\0' + r.new_name).toLowerCase();
+
+    const dis = r.status !== 'ok' ? 'disabled' : '';
+    const noteText = [r.reason, (r.notes || []).join(' · ')].filter(Boolean).join(' · ');
+    div.innerHTML = `
+      <div class="c-chk"><input type="checkbox" ${r.selected ? 'checked' : ''} ${dis} data-id="${r.id}"></div>
+      <div class="c-old" title="${esc(r.old_name)}">${esc(r.old_name)}</div>
+      <div class="c-arw">→</div>
+      <div class="c-new">
+        <input type="text" value="${esc(r.new_name)}" data-edit="${r.id}" spellcheck="false" title="${esc(noteText)}">
+        ${noteText ? `<div class="note" title="${esc(noteText)}">${esc(noteText)}</div>` : ''}
+      </div>
+      <div class="c-st">${rowTag(r.status)}</div>`;
+    frag.appendChild(div);
+  }
+  tbl.innerHTML = '';
+  tbl.appendChild(frag);
+
+  tbl.querySelectorAll('.c-chk input[data-id]').forEach(cb => {
+    cb.addEventListener('change', e => {
+      const row = S.rows.find(x => x.id === e.target.dataset.id);
+      if(row){
+        row.selected = row.status === 'ok' && e.target.checked;
+        e.target.checked = row.selected;
+        e.target.closest('.row').classList.toggle('sel', row.selected);
+        updateStatFromRows();
+      }
+    });
+  });
+
+  tbl.querySelectorAll('[data-edit]').forEach(inp => {
+    inp.addEventListener('input', e => {
+      const row = S.rows.find(x => x.id === e.target.dataset.edit);
+      if(!row) return;
+      row.new_name = e.target.value;
+      row.reason = '手工修改';
+      revalidateRows(new Set([row]));
+      refreshRenderedRows();
+      updateStatFromRows();
+    });
+  });
+
+  syncHeaderCheckbox();
+  filterRows();
+}
+
+function filterRows(){
+  const byId = new Map(S.rows.map(r => [r.id, r]));
+  document.querySelectorAll('#tbl .row').forEach(el => {
+    const row = byId.get(el.dataset.id);
+    el.style.display = row && rowVisible(row) ? '' : 'none';
+  });
+  syncHeaderCheckbox();
+}
+
+function checkAll(on){
+  // 只勾选当前筛选后可见的行，不能把隐藏行也一起选中。
+  S.rows.forEach(r => {
+    r.selected = !!(on && r.status === 'ok' && rowVisible(r));
+  });
+  refreshRenderedRows();
+  updateStatFromRows();
+}
+
+function updateStatFromRows(){
+  const c = {change:0, un:0, cf:0, iv:0};
+  for(const r of S.rows){
+    if(r.status === 'unchanged' || r.new_name === r.old_name) c.un++;
+    else if(r.status === 'conflict') c.cf++;
+    else if(r.status === 'invalid') c.iv++;
+    else if(r.status === 'ok' && r.selected) c.change++;
+  }
+  $('s-change').textContent = c.change;
+  $('s-un').textContent = c.un;
+  $('s-cf').textContent = c.cf;
+  $('s-iv').textContent = c.iv;
+  refreshExecBtn();
+  syncHeaderCheckbox();
+}
+
+function refreshExecBtn(){
+  const n = executableRows().length;
+  $('btnExec').disabled = n === 0;
+  $('btnExec').textContent = n ? `执行改名（${n}）` : '执行改名';
+}
+
+/* ---------------- 执行 ---------------- */
+function askExecute(){
+  const picks = executableRows();
+  if(!picks.length) return toast('没有可执行的条目', 'err');
+  const dirs = Array.from(new Set(picks.map(r => r.dir)));
+  $('e-root').textContent = dirs.length === 1 ? dirs[0]
+    : `多个目录（${dirs.length} 个）：` + dirs.slice(0, 2).join('；')
+      + (dirs.length > 2 ? ' …' : '');
+  $('e-count').textContent = picks.length + ' 项';
+  openMask('maskExec');
+}
+
+async function rescanAfterWrite(){
+  if(S.root){
+    $('path').value = S.root;
+    await scan(true);
+  }else{
+    S.rows = [];
+    renderRows();
+    updateStatFromRows();
+  }
+}
+
+async function doExecute(){
+  const picks = executableRows()
+    .map(r => ({src: r.path, new_name: r.new_name, old_name: r.old_name}));
+  closeMask('maskExec');
+  if(!picks.length) return toast('没有可执行的条目', 'err');
+  try{
+    const r = await api('/api/execute', {sid: S.sid, root: S.root, items: picks});
+    if(handleStale(r)) return;
+    // 部分成功时 ok=false，但磁盘已经发生变化，仍必须刷新，不能提前 return。
+    if(r.error && r.done === undefined) return toast(r.error, 'err');
+    let msg = `完成 ${r.done || 0} 个`;
+    if(r.skipped && r.skipped.length) msg += `，跳过 ${r.skipped.length}`;
+    if(r.failed && r.failed.length) msg += `，失败 ${r.failed.length}`;
+    if(r.warning) msg += '；' + r.warning;
+    if(r.failed && r.failed.length) console.warn('失败明细', r.failed);
+    await rescanAfterWrite();
+    const bad = !r.ok || !r.done || (r.failed && r.failed.length)
+      || (r.skipped && r.skipped.length) || !!r.warning;
+    toast(msg, bad ? 'err' : 'ok');
+  }catch(e){
+    toast('执行失败：' + e.message, 'err');
+  }
+}
+
+/* ---------------- 历史 ---------------- */
+async function showJournals(){
+  openMask('maskHist');
+  const box = $('histBody');
+  box.innerHTML = '<div style="padding:10px;color:var(--dim)">加载中…</div>';
+  try{
+    const r = await api('/api/journals');
+    if(!r.ok){
+      box.textContent = '读取失败：' + (r.error || '未知错误');
+      return;
+    }
+    if(!r.items.length){
+      box.innerHTML = '<div style="padding:10px;color:var(--dim)">还没有改名记录。</div>';
+      return;
+    }
+    box.innerHTML = r.items.map(j => `
+      <div class="jitem">
+        <div class="jmeta">
+          <div class="jt">${esc(j.created_str || '')} · ${j.done}/${j.total} 个${j.rolled_back ? ' · 已回滚' : ''}</div>
+          <div class="js">${esc(j.root || '')}</div>
+        </div>
+        ${j.rolled_back
+          ? '<span class="tag un">已回滚</span>'
+          : `<button class="btn sm" data-rb="${esc(j.id || '')}">回滚</button>`}
+      </div>`).join('');
+    // 同样走 data 属性，避免把 id 拼进内联 JS
+    box.querySelectorAll('[data-rb]').forEach(b => {
+      b.addEventListener('click', () => doRollback(b.dataset.rb));
+    });
+  }catch(e){
+    box.textContent = '读取失败：' + e.message;
+  }
+}
+
+async function doRollback(id){
+  if(!confirm('确认把这次改名的文件全部恢复原名？\n若文件已被移动或删除，对应条目会被跳过。')) return;
+  try{
+    const r = await api('/api/rollback', {id});
+    if(r.error && r.done === undefined) return toast(r.error, 'err');
+    const skipped = r.skipped || [], failed = r.failed || [], done = r.done || 0;
+    let msg = done ? `已恢复 ${done} 个` : '未恢复任何文件';
+    if(skipped.length) msg += `，跳过 ${skipped.length}`;
+    if(failed.length) msg += `，失败 ${failed.length}`;
+    if(r.warning) msg += '；' + r.warning;
+    await showJournals();
+    await rescanAfterWrite();
+    // 有跳过项时允许稍后再次回滚剩余条目，提示必须明确是“未全部完成”。
+    toast(msg, (!r.ok || !done || failed.length || skipped.length || r.warning) ? 'err' : 'ok');
+  }catch(e){ toast('回滚失败：' + e.message, 'err'); }
+}
+
+/* ---------------- 规则方案 / 测试器 ---------------- */
+function setPresets(list, selected){
+  // 新契约为数组；兼容旧版本地服务启动时返回的 name -> preset 对象。
+  S.presets = Array.isArray(list) ? list : Object.keys(list || {}).map(name =>
+    Object.assign({name}, list[name]));
+  const sel = $('presetSel');
+  const keep = selected === undefined ? sel.value : selected;
+  sel.innerHTML = '<option value="">— 规则方案 —</option>';
+  for(const p of S.presets){
+    const o = document.createElement('option');
+    o.value = p.name; o.textContent = p.name;
+    sel.appendChild(o);
+  }
+  sel.value = S.presets.some(p => p.name === keep) ? keep : '';
+}
+
+async function loadPresets(){
+  try{
+    const r = await api('/api/presets');
+    if(!r.ok) return toast(r.error || '方案读取失败', 'err');
+    setPresets(r.presets);
+  }catch(e){ toast('方案读取失败：' + e.message, 'err'); }
+}
+
+function loadPreset(){
+  const name = $('presetSel').value;
+  if(!name) return;
+  const p = S.presets.find(x => x.name === name);
+  if(!p) return;
+  // enabled:{} 是“全部关闭”的有效值：显式空对象必须先把所有规则关掉。
+  // 旧方案的局部映射则从默认值开始覆盖。
+  S.enabled = Object.assign({}, S.state.default_enabled);
+  if(p.enabled && Object.keys(p.enabled).length === 0){
+    for(const r of S.state.rules) S.enabled[r.id] = false;
+  }else{
+    for(const rid in (p.enabled || {})) S.enabled[rid] = !!p.enabled[rid];
+  }
+  S.params = JSON.parse(JSON.stringify(S.state.default_params));
+  for(const rid of Object.keys(p.params || {})){
+    S.params[rid] = Object.assign(S.params[rid] || {}, p.params[rid]);
+  }
+  $('lowerExt').checked = !!p.lower_ext;
+  $('autoDedupe').checked = !!p.auto_dedupe;
+  $('sortBy').value = p.sort_by || 'name';
+  S.sortDesc = !!p.sort_desc;
+  $('sortDir').textContent = S.sortDesc ? '↓' : '↑';
+  $('target').value = p.target || 'name';
+  renderRules();
+  schedulePreview();
+  toast('已套用方案：' + name, 'ok');
+}
+
+async function savePreset(){
+  const cur = $('presetSel').value;
+  const name = (prompt('方案名称（同名会覆盖）：', cur || '') || '').trim();
+  if(!name) return;
+  try{
+    const r = await api('/api/presets/save', {
+      name, enabled: S.enabled, params: S.params,
+      lower_ext: $('lowerExt').checked,
+      auto_dedupe: $('autoDedupe').checked,
+      sort_by: $('sortBy').value,
+      sort_desc: S.sortDesc,
+      target: $('target').value
+    });
+    if(!r.ok) return toast(r.error || '保存失败', 'err');
+    setPresets(r.presets, name);
+    toast('方案已保存：' + name, 'ok');
+  }catch(e){ toast('方案保存失败：' + e.message, 'err'); }
+}
+
+async function delPreset(){
+  const name = $('presetSel').value;
+  if(!name) return toast('请先在下拉里选中一个方案', 'err');
+  if(!confirm('删除方案「' + name + '」？')) return;
+  try{
+    const r = await api('/api/presets/delete', {name});
+    if(!r.ok) return toast(r.error || '删除失败', 'err');
+    setPresets(r.presets, '');
+    toast('已删除', 'ok');
+  }catch(e){ toast('方案删除失败：' + e.message, 'err'); }
+}
+
+let _testTimer = null;
+function scheduleTest(){
+  clearTimeout(_testTimer);
+  _testTimer = setTimeout(runTest, 300);
+}
+
+async function runTest(){
+  const name = $('testName').value.trim();
+  const out = $('testOut');
+  if(!name){ out.textContent = ''; return; }
+  try{
+    const r = await api('/api/test-name', {name, enabled: S.enabled, params: S.params});
+    if(!r.ok){ out.style.color = 'var(--red)'; out.textContent = r.error || '失败'; return; }
+    const changed = r.result !== name;
+    const names = (r.applied || []).map(id => {
+      const rule = S.state.rules.find(x => x.id === id);
+      return rule ? rule.name : id;
+    });
+    out.style.color = changed ? 'var(--green)' : 'var(--dim)';
+    out.textContent = (changed ? '→ ' + r.result : '（无变化）')
+      + (names.length ? '\n应用规则：' + names.join('、') : '')
+      + (r.rare && r.rare.length ? '\n非常用字：' + r.rare.join('') : '');
+  }catch(e){
+    out.style.color = 'var(--red)';
+    out.textContent = '请求失败：' + e.message;
+  }
+}
+
+/* ---------------- 右键菜单 ---------------- */
+async function showShell(){
+  openMask('maskShell');
+  $('shState').textContent = '读取中…';
+  $('shInfo').textContent = '';
+  try{
+    const s = await api('/api/shell');
+    S.shell = s;
+    $('shState').textContent = s.installed ? '已安装' : (s.supported ? '未安装' : '当前系统不支持');
+    $('shState').style.color = s.installed ? 'var(--green)' : 'var(--yellow)';
+    $('shInfo').textContent = s.supported
+      ? ('调用：' + s.python + '  launcher.py')
+      : '仅在 Windows 上可用';
+  }catch(e){
+    $('shState').textContent = '读取失败：' + e.message;
+  }
+}
+
+async function shellDo(act){
+  try{
+    const r = await api('/api/shell/' + act, {});
+    if(!r.ok) return toast(r.error || '操作失败', 'err');
+    toast(act === 'install' ? '右键菜单已安装' : '右键菜单已卸载', 'ok');
+    if(act === 'install'){
+      setTimeout(() => toast('如资源管理器里没立刻出现，注销重登录或重启资源管理器即可', 'ok'), 400);
+    }
+    await showShell();
+  }catch(e){ toast('右键菜单操作失败：' + e.message, 'err'); }
+}
+
+/* ---------------- 拖放 / 粘贴 / 清单 ---------------- */
+function looksLikePath(s){
+  return /^[a-zA-Z]:[\\/]/.test(s) || /^\\\\/.test(s);
+}
+
+function parsePaths(text){
+  // 以行为主，分号是合法文件名字符，绝不再当路径分隔符。
+  const out = [];
+  for(const line of String(text || '').split(/\r?\n/)){
+    const quoted = [];
+    const re = /"([^"]+)"|'([^']+)'/g;
+    let m;
+    while((m = re.exec(line)) !== null) quoted.push(m[1] || m[2] || '');
+    const candidates = quoted.length ? quoted : [line];
+    for(const raw of candidates){
+      const s = raw.trim();
+      if(s && looksLikePath(s)) out.push(s);
+    }
+  }
+  return out;
+}
+
+async function handlePaste(e){
+  const t = e.target;
+  if(t && (t.isContentEditable || (t.closest && t.closest('input, textarea, [contenteditable]')))) return;
+  const clipboard = e.clipboardData || window.clipboardData;
+  const text = clipboard ? clipboard.getData('text') : '';
+  if(!text) return;
+  const paths = parsePaths(text);
+  if(!paths.length) return;             // 不是路径就当普通粘贴
+  e.preventDefault();
+  try{
+    const r = await api('/api/add-paths', {sid: S.sid, paths});
+    if(handleStale(r)) return;
+    if(!r.ok) return toast(r.error || '添加失败', 'err');
+    S.sid = r.sid || S.sid;
+    S.root = r.root || S.root;
+    if(S.root && !$('path').value) $('path').value = S.root;
+    await preview();
+    let msg = '已加入 ' + r.added + ' 项';
+    if(r.errors && r.errors.length) msg += '，' + r.errors.length + ' 项失败：' + r.errors[0];
+    toast(msg, r.added ? 'ok' : 'err');
+  }catch(e){ toast('粘贴添加失败：' + e.message, 'err'); }
+}
+
+async function handleDrop(e){
+  e.preventDefault();
+  $('dropHint').classList.remove('show');
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if(!files || !files.length) return;
+
+  // 浏览器不暴露绝对路径，只能拿文件名+大小去已扫描清单里对
+  const names = [];
+  for(const f of files){
+    names.push({name: f.name, size: f.size});
+  }
+  try{
+    const r = await api('/api/add-by-name', {sid: S.sid, names});
+    if(handleStale(r)) return;
+    if(!r.ok) return toast(r.error || '添加失败', 'err');
+    if(!r.matched){
+      toast('这些文件不在当前扫描范围，或有多个同名候选。'
+            + '请先扫描所在目录，或 Shift+右键「复制为路径」后 Ctrl+V 粘贴。', 'err');
+      return;
+    }
+    await preview();
+    let msg = '已加入 ' + r.matched + ' 项';
+    if(r.missing && r.missing.length) msg += '，' + r.missing.length + ' 项未找到';
+    if(r.ambiguous && r.ambiguous.length) msg += '，' + r.ambiguous.length + ' 项同名无法区分';
+    toast(msg, (r.missing && r.missing.length) || (r.ambiguous && r.ambiguous.length) ? 'err' : 'ok');
+  }catch(e){ toast('拖放添加失败：' + e.message, 'err'); }
+}
+
+async function showAll(){
+  try{
+    const r = await api('/api/show-all', {sid: S.sid});
+    if(handleStale(r)) return;
+    if(!r.ok) return toast(r.error || '操作失败', 'err');
+    await preview();
+    toast('已显示全部条目', 'ok');
+  }catch(e){ toast('显示全部失败：' + e.message, 'err'); }
+}
+
+async function clearList(){
+  if(!S.rows.length && !$('path').value) return;
+  if(!confirm('清空当前列表？只是清空待处理清单，不会动磁盘上的任何文件。')) return;
+  try{
+    const r = await api('/api/clear-list', {sid: S.sid});
+    if(handleStale(r)) return;
+    if(!r.ok) return toast(r.error || '清空失败', 'err');
+    S.previewSeq++;
+    S.scanSeq++;
+    S.rows = [];
+    S.sid = '';
+    S.root = '';
+    $('path').value = '';
+    renderRows();
+    updateStatFromRows();
+    toast('已清空 ' + (r.cleared || 0) + ' 项', 'ok');
+  }catch(e){ toast('清空失败：' + e.message, 'err'); }
+}
+
+/* ---------------- 噪声词库 ---------------- */
+async function openNoise(){
+  try{
+    const r = await api('/api/noise');
+    const w = r.words || [];
+    $('noiseText').value = w.join(' ');
+    $('noiseHint').textContent = '当前共 ' + w.length + ' 个词。';
+    openMask('maskNoise');
+  }catch(e){ toast('读取词库失败：' + e.message, 'err'); }
+}
+
+async function saveNoise(){
+  try{
+    const r = await api('/api/noise', {text: $('noiseText').value});
+    if(!r.ok){ toast(r.error || '保存失败', 'err'); return; }
+    closeMask('maskNoise');
+    toast('已保存 ' + r.count + ' 个噪声词', 'ok');
+    if(r.risky && r.risky.length){
+      setTimeout(() => toast('注意：单字词「' + r.risky.join(' ') + '」可能误伤正常名字', 'err'), 300);
+    }
+    if(S.root) await preview();
+  }catch(e){ toast('保存词库失败：' + e.message, 'err'); }
+}
+
+async function restoreNoise(){
+  if(!confirm('恢复为内置默认词库？你的自定义内容会被覆盖。')) return;
+  try{
+    const r = await api('/api/noise', {restore: true});
+    if(!r.ok) return toast(r.error || '恢复失败', 'err');
+    $('noiseText').value = (r.words || []).join(' ');
+    $('noiseHint').textContent = '当前共 ' + (r.words || []).length + ' 个词。';
+    toast('已恢复默认', 'ok');
+    if(S.root) await preview();
+  }catch(e){ toast('恢复词库失败：' + e.message, 'err'); }
+}
+
+/* ---------------- 排序 / 导出 / 导入 ---------------- */
+function toggleSort(){
+  S.sortDesc = !S.sortDesc;
+  $('sortDir').textContent = S.sortDesc ? '↓' : '↑';
+  preview();
+}
+
+function csvCell(s){
+  let v = String(s ?? '');
+  // 仅字符串字段做公式注入防护；数值列不走这里，避免误伤普通负数。
+  if(/^[=+\-@]/.test(v.replace(/^\s+/, ''))) v = "'" + v;
+  return '"' + v.replace(/"/g, '""') + '"';
+}
+
+function formatLocalDateTime(d){
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+    + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function exportList(){
+  const rows = S.rows.filter(r => r.selected);
+  if(!rows.length) return toast('没有勾选任何条目', 'err');
+  const lines = [['原文件名', '新文件名', '所在目录', '大小KB', '修改时间'].map(csvCell).join(',')];
+  for(const r of rows){
+    const t = r.mtime ? formatLocalDateTime(new Date(r.mtime * 1000)) : '';
+    lines.push([csvCell(r.old_name), csvCell(r.new_name), csvCell(r.dir),
+                String(Math.round((r.size || 0) / 1024)), csvCell(t)].join(','));
+  }
+  // BOM 让 Excel 正确识别 UTF-8 中文
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], {type: 'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '改名清单_' + formatLocalDateTime(new Date()).slice(0, 10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+  toast('已导出 ' + rows.length + ' 条', 'ok');
+}
+
+function splitPair(line){
+  // 解析逗号/制表符分隔字段，支持引号、字段内分隔符及 "" 转义。
+  const cells = [];
+  let field = '', quoted = false;
+  for(let i = 0; i < line.length; i++){
+    const ch = line[i];
+    if(quoted){
+      if(ch === '"'){
+        if(line[i + 1] === '"'){ field += '"'; i++; }
+        else quoted = false;
+      }else field += ch;
+    }else if(ch === '"' && field === ''){
+      quoted = true;
+    }else if(ch === ',' || ch === '\t'){
+      cells.push(field);
+      field = '';
+    }else field += ch;
+  }
+  cells.push(field);
+  // 去掉本工具导出时添加的公式防护符，保证自己的 CSV 可无损重导入。
+  const clean = v => String(v || '').trim().replace(/^'(?=[=+\-@])/, '');
+  return [clean(cells[0]), clean(cells[1])];
+}
+
+function withExt(name, ext){
+  let s = String(name || '').trimEnd();
+  if(!ext) return s;
+  // 已是目标扩展名：保留。
+  if(s.toLowerCase().endsWith(ext.toLowerCase())) return s;
+  // 名称末尾是“像扩展名”的字母段（.doc/.pdf）时替换掉，避免 b.doc.docx；
+  // 2026.10.29 会议、报告 v1.2 这类点分主名不会被误认成扩展名。
+  const m = /\.([A-Za-z][A-Za-z0-9]{1,4})$/.exec(s);
+  if(m) return s.slice(0, -m[0].length) + ext;
+  return s + ext;
+}
+
+function showImport(){
+  if(!S.rows.length) return toast('请先扫描并预览', 'err');
+  $('impText').value = '';
+  openMask('maskImp');
+}
+
+function applyImport(){
+  const pairs = $('impText').value.split(/\r?\n/).filter(l => l.trim()).map(splitPair)
+    .filter(([a, b]) => !(a === '原文件名' && b === '新文件名'));
+  if(!pairs.length) return toast('对照表是空的', 'err');
+  const picks = S.rows.filter(r => r.selected);
+  if(!picks.length) return toast('请先勾选要改名的条目', 'err');
+  const byOrder = $('impByOrder').checked;
+  const changed = new Set();
+
+  if(byOrder){
+    pairs.forEach((pair, i) => {
+      if(i >= picks.length || !pair[1]) return;
+      picks[i].new_name = withExt(pair[1], picks[i].ext);
+      picks[i].reason = '来自对照表';
+      changed.add(picks[i]);
+    });
+  }else{
+    const map = new Map();
+    for(const [a, b] of pairs){
+      if(a && b) map.set(a.toLowerCase(), b);
+    }
+    picks.forEach(p => {
+      const v = map.get(p.old_name.toLowerCase());
+      if(!v) return;
+      p.new_name = withExt(v, p.ext);
+      p.reason = '来自对照表';
+      changed.add(p);
+    });
+  }
+  revalidateRows(changed);
+  const n = Array.from(changed).filter(r => r.status === 'ok').length;
+  renderRows();
+  updateStatFromRows();
+  closeMask('maskImp');
+  toast(`已套用 ${n} 条合法结果（共 ${pairs.length} 行）`, n ? 'ok' : 'err');
+}
+
+/* ---------------- AI 语义 ---------------- */
+function openAI(){
+  if(!ensureState()) return;
+  const l = S.state.llm || {};
+  $('aiBase').value = l.base_url || '';
+  $('aiModel').value = l.model || '';
+  $('aiPrompt').value = l.prompt || '';
+  $('aiEnabled').checked = !!l.enabled;
+  $('aiKey').value = '';
+  $('aiKey').placeholder = l.has_key ? '已保存，留空则不修改' : '本地 Ollama 可留空';
+  $('aiCfgWarn').style.display = l.ready ? 'none' : 'block';
+  if(!l.ready) $('aiCfg').open = true;
+  openMask('maskAI');
+}
+
+async function saveAICfg(silent){
+  const body = {
+    enabled: $('aiEnabled').checked,
+    base_url: $('aiBase').value.trim(),
+    model: $('aiModel').value.trim(),
+    prompt: $('aiPrompt').value,
+  };
+  const k = $('aiKey').value.trim();
+  if(k) body.api_key = k;
+  try{
+    const r = await api('/api/llm-config', body);
+    if(r.ok){
+      S.state.llm = Object.assign(S.state.llm || {}, r.llm, {prompt: body.prompt});
+      $('aiCfgWarn').style.display = r.llm.ready ? 'none' : 'block';
+      if(!silent) toast('设置已保存', 'ok');
+    }else if(!silent){
+      toast(r.error || '保存失败', 'err');
+    }
+    return r;
+  }catch(e){
+    if(!silent) toast('保存失败：' + e.message, 'err');
+    return {ok:false};
+  }
+}
+
+async function aiPing(){
+  await saveAICfg(true);
+  toast('正在测试连接…');
+  try{
+    const r = await api('/api/llm-suggest', {stems: ['测试连通性'], instruction: '', paths: []});
+    if(r && r.ok) toast('连接正常，模型返回：' + (r.names && r.names[0] || '（空）'), 'ok');
+    else toast((r && r.error) || '连接失败', 'err');
+  }catch(e){
+    toast('连接失败：' + e.message, 'err');
+  }
+}
+
+async function aiSuggest(){
+  const picks = S.rows.filter(r => r.selected);
+  if(!picks.length) return toast('没有勾选任何条目', 'err');
+  const stems = picks.map(r => {
+    const nm = r.new_name || r.old_name;
+    return (r.ext && nm.toLowerCase().endsWith(r.ext.toLowerCase()))
+      ? nm.slice(0, -r.ext.length) : nm;
+  });
+  toast('正在请求模型，条目多时需要一会儿…');
+  let r;
+  try{
+    r = await api('/api/llm-suggest', {
+      stems,
+      paths: picks.map(p => p.path),
+      instruction: $('aiIns').value,
+      with_content: $('aiContent').checked
+    });
+  }catch(e){
+    return toast('请求失败：' + e.message, 'err');
+  }
+  if(!r.names) return toast(r.error || '模型未返回结果', 'err');
+
+  const changed = new Set();
+  picks.forEach((p, i) => {
+    const nn = String(r.names[i] || '').trim();
+    if(!nn || nn === stems[i]) return;
+    p.new_name = withExt(nn, p.ext || '');
+    p.reason = 'AI 建议';
+    changed.add(p);
+  });
+  revalidateRows(changed);
+  const n = Array.from(changed).filter(p => p.status === 'ok').length;
+  renderRows();
+  updateStatFromRows();
+  closeMask('maskAI');
+  if(r.error) toast('部分完成：' + r.error, 'err');
+  else toast(`已生成 ${n} 条建议` + (r.notice ? '；' + r.notice : '')
+             + '，核对无误后再点「执行改名」', r.notice ? 'err' : 'ok');
+}
+
+/* ---------------- 启动 ---------------- */
+document.addEventListener('DOMContentLoaded', async () => {
+  await boot();
+  $('path').addEventListener('keydown', e => { if(e.key === 'Enter') scan(); });
+  document.querySelectorAll('.mask').forEach(m => {
+    m.addEventListener('mousedown', e => { if(e.target === m) m.classList.remove('show'); });
+  });
+
+  // 拖放：整块右侧区域都是投放区
+  const view = document.querySelector('section.view');
+  ['dragenter', 'dragover'].forEach(ev => {
+    view.addEventListener(ev, e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      $('dropHint').classList.add('show');
+    });
+  });
+  view.addEventListener('dragleave', e => {
+    if(e.target === view || !view.contains(e.relatedTarget)) $('dropHint').classList.remove('show');
+  });
+  view.addEventListener('drop', handleDrop);
+  // 浏览器默认的"拖文件到页面会打开它"，必须挡掉
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => e.preventDefault());
+  document.addEventListener('paste', handlePaste);
+  // 支持 ?root=目录&auto=1 直接带参打开（右键文件夹、快捷方式）
+  // 支持 ?path=文件 直接把单个文件加入清单（右键文件）
+  const q = new URLSearchParams(location.search);
+  const qr = q.get('root');
+  const qps = q.getAll('path');
+  if(qr){
+    $('path').value = qr;
+    if(q.get('auto') === '1') scan();
+  }else if(qps.length){
+    try{
+      const r = await api('/api/add-paths', {paths: qps, new_session: true});
+      if(r.added){
+        S.sid = r.sid || S.sid;
+        S.root = r.root || S.root;
+        if(S.root && !$('path').value) $('path').value = S.root;
+        toast('已加入 ' + r.added + ' 项', 'ok');
+        await preview();
+      }else{
+        toast((r.errors && r.errors[0]) || '未能加入所选文件', 'err');
+      }
+    }catch(e){ toast('加入失败：' + e.message, 'err'); }
+  }
+});
+</script>
+</body>
+</html>
