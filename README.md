@@ -8,6 +8,18 @@ Windows 本地工具。针对中文文件名的批量规范化：中文数字转
 
 ---
 
+## 从 GitHub 拉取到笔记本
+
+仓库是私有的，笔记本上需要先登录有权限的 GitHub 账号：
+
+```bat
+git clone https://github.com/gui8912/cn-file-renamer.git
+cd cn-file-renamer
+```
+
+然后双击 **`启动.bat`**，或执行 `python app.py`。**不需要 pip install 任何包。**
+首次运行会在 `data/` 下自动生成配置，仓库不会带上个人目录授权或 API Key。
+
 ## 启动
 
 双击 **`启动.bat`**，浏览器会自动打开本机页面。默认地址是
