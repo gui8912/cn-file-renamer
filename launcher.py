@@ -91,15 +91,19 @@ def authorize(path):
     """把目录写进白名单。服务每次都读文件，所以改文件即刻生效。"""
     try:
         from core import engine
-        cfg = engine.load_config()
-        real = os.path.abspath(path)
-        if engine.is_path_blocked(real):
-            log('拒绝自动授权系统目录: %s' % real)
-            return
-        if not any(os.path.normcase(r) == os.path.normcase(real) for r in cfg['trusted_roots']):
-            cfg['trusted_roots'].append(real)
-            engine.save_config(cfg)
-            log('已自动授权: %s' % real)
+        real = os.path.abspath(path)  # modified
+        if engine.is_path_blocked(real):  # modified
+            log('拒绝自动授权系统目录: %s' % real)  # modified
+            return  # modified
+        # 服务进程可能同时在网页端添加/删除授权目录；整段读改写持跨进程锁，
+        # 避免把对方刚写的白名单整个覆盖掉。
+        with engine.config_lock():  # modified
+            cfg = engine.load_config()  # modified
+            if not any(os.path.normcase(r) == os.path.normcase(real)  # modified
+                       for r in cfg['trusted_roots']):  # modified
+                cfg['trusted_roots'].append(real)  # modified
+                engine.save_config(cfg)  # modified
+                log('已自动授权: %s' % real)  # modified
     except Exception as e:
         log('授权失败: %s' % e)
 
@@ -131,13 +135,21 @@ def main():
 
     import urllib.parse
     url = 'http://127.0.0.1:%d/' % port
-    if files and not dirs:
-        url += '?' + '&'.join('path=' + urllib.parse.quote(p) for p in files)
-    elif dirs:
+    parts = []  # modified
+    if files and dirs:  # modified
+        # 混合多选原来落进 elif dirs，files 被静默丢掉且界面毫无提示。
+        # /api/add-paths 本身能同时吃目录和文件，统一按 path= 传，一个不漏。
+        parts = ['path=' + urllib.parse.quote(p) for p in dirs + files]  # modified
+        log('混合选择（文件 %d / 目录 %d），按路径逐项加入' % (len(files), len(dirs)))  # modified
+    elif files:  # modified
+        parts = ['path=' + urllib.parse.quote(p) for p in files]  # modified
+    elif dirs:  # modified
         # 多选目录仍先处理第一个；其余目录已授权，可在页面切换。
-        url += '?root=' + urllib.parse.quote(dirs[0]) + '&auto=1'
+        parts = ['root=' + urllib.parse.quote(dirs[0]), 'auto=1']  # modified
         if len(dirs) > 1:
             log('多选目录，仅自动扫描第一个：%s' % dirs[0])
+    if parts:  # modified
+        url += '?' + '&'.join(parts)  # modified
     log('目标地址 %s' % url)
     if os.environ.get('RENAME_LAUNCHER_NO_OPEN'):
         log('测试模式：不打开浏览器')

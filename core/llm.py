@@ -176,8 +176,13 @@ def _chat(messages, cfg):
     if key:
         req.add_header('Authorization', 'Bearer ' + key)
 
-    with urllib.request.urlopen(req, timeout=float(cfg.get('timeout', 120))) as r:
-        data = json.loads(r.read().decode('utf-8', 'ignore'))
+    # A-19 已给 docx 解压加了 2 MiB 上限，模型响应体同样要有界：
+    # 自配的兼容接口若返回巨量数据会直接打爆内存。
+    with urllib.request.urlopen(req, timeout=float(cfg.get('timeout', 120))) as r:  # modified
+        raw = r.read(2 * 1024 * 1024 + 1)  # modified
+        if len(raw) > 2 * 1024 * 1024:  # modified
+            raise ValueError('模型响应体过大（超过 2 MiB）')  # modified
+        data = json.loads(raw.decode('utf-8', 'ignore'))  # modified
 
     try:
         return data['choices'][0]['message']['content']

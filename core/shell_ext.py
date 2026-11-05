@@ -80,23 +80,31 @@ def _delete_tree(root, path):
 
 def status():
     """返回当前安装状态与将要写入的命令。"""
-    installed = False
+    # 原来只要有任意一个键存在就报 installed=True，删掉其中一个键后会误报"已安装"。
+    # 改成逐键记录，前端才能提示"部分安装 / 需要重装"。
+    keys = {}  # modified
     current_cmd = ''
     if is_windows():
         for key in (KEY_DIR, KEY_BG, KEY_FILE):
             try:
                 with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key + r'\command') as k:
-                    installed = True
+                    keys[key] = True  # modified
                     if key == KEY_DIR:
                         current_cmd = winreg.QueryValueEx(k, '')[0]
             except OSError:
-                continue
+                keys[key] = False  # modified
+    any_installed = any(keys.values())  # modified
+    all_installed = bool(keys) and all(keys.values())  # modified
     launcher_registered = bool(current_cmd and LAUNCHER.lower() in current_cmd.lower())
     return {
         'ok': True,
         'supported': is_windows(),
-        'installed': installed,
-        'needs_reinstall': bool(installed and current_cmd and not launcher_registered),
+        'installed': any_installed,  # modified: 兼容旧字段语义（任一已装）
+        'installed_all': all_installed,  # modified
+        'partial': bool(any_installed and not all_installed),  # modified
+        # 目录搬家后 LAUNCHER 变了、残缺安装、或注册表仍指向旧路径，都要提示重装。
+        'needs_reinstall': bool(any_installed and (  # modified
+            not all_installed or not launcher_registered)),
         'app': APP_NAME,
         'python': pythonw_path(),
         'launcher': LAUNCHER,

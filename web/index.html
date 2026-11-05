@@ -359,6 +359,7 @@ details.cfg .inner{padding:0 11px 11px}
         <button class="btn ghost" onclick="showAll()" title="取消拖放形成的聚焦，显示整个目录">显示全部</button>
         <button class="btn ghost" onclick="clearList()" title="清空列表，重新来过">清空列表</button>
         <button class="btn" onclick="preview()">↻ 生成预览</button>
+        <button class="btn ghost" id="btnResetManual" onclick="resetManualNames()" disabled title="手工改过、对照表导入或 AI 写入的新名在重算预览时会保留；点这里清除并恢复规则计算结果">↺ 恢复规则计算</button>
         <button class="btn" onclick="openAI()">✦ AI 语义</button>
         <button class="btn ghost" onclick="showJournals()">历史与回滚</button>
       </div>
@@ -884,6 +885,10 @@ async function preview(){
     S.sid = r.sid || S.sid;
     // 重新预览不能把用户手动取消的勾选全部恢复；按路径继承，只有仍可改的行保留。
     const prev = new Map(S.rows.map(x => [x.path, !!x.selected]));
+    // 手工编辑 / 对照表导入 / AI 建议写入的新名也要按路径继承；原来只继承 selected，
+    // 导致调一下排序或规则就把用户改好的名字静默换成规则重算结果。
+    const manual = new Map(S.rows.filter(x => x._manual)  // modified
+                           .map(x => [x.path, x.new_name]));  // modified
     S.rows = r.rows.map(row => Object.assign(row, {
       selected: prev.has(row.path)
         ? (prev.get(row.path) && row.status === 'ok')
@@ -892,6 +897,20 @@ async function preview(){
       _previewStatus: row.status,
       _previewReason: row.reason || ''
     }));
+    if(manual.size){  // modified
+      const keepSel = new Map(S.rows.map(r => [r.path, !!r.selected]));  // modified
+      for(const row of S.rows){  // modified
+        if(!manual.has(row.path)) continue;  // modified
+        row.new_name = manual.get(row.path);  // modified
+        row._manual = true;  // modified
+      }  // modified
+      // 手工名重新过一遍本地校验（合法性 / 同批重名 / 服务端冲突保留），
+      // 再把继承下来的勾选状态还回去。
+      revalidateRows(new Set());  // modified
+      for(const row of S.rows){  // modified
+        row.selected = !!(keepSel.get(row.path) && row.status === 'ok');  // modified
+      }  // modified
+    }
     renderRows();
     updateStatFromRows();
   }catch(e){
@@ -904,13 +923,31 @@ function esc(s){
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// 后端 validate.illegal_chars_in 把孤立代理项列为非法；前端必须同样拦住，
+// 否则预览显示"可改"、执行时却被后端整条跳过。合法代理对（emoji）要放行。
+function hasLoneSurrogate(s){  // modified
+  for(let i = 0; i < s.length; i++){  // modified
+    const c = s.charCodeAt(i);  // modified
+    if(c >= 0xD800 && c <= 0xDBFF){  // modified
+      const n = s.charCodeAt(i + 1);  // modified
+      if(!(n >= 0xDC00 && n <= 0xDFFF)) return true;  // modified
+      i++;  // modified
+    }else if(c >= 0xDC00 && c <= 0xDFFF){  // modified
+      return true;  // modified
+    }  // modified
+  }  // modified
+  return false;  // modified
+}  // modified
+
 function nameError(name){
   if(!name || !name.trim()) return '文件名为空';
   if(/[\\/:*?"<>|\x00-\x1F]/.test(name)) return '含 Windows 非法字符';
+  if(hasLoneSurrogate(name)) return '含孤立代理项';  // modified
   if(name.startsWith(' ')) return '开头不能是空格';
   const stem = name.split('.')[0].trim();
-  // 与后端 validate.py 对齐，包含 CONIN$/CONOUT$ 和 COM¹/LPT² 等 Windows 变体。
-  if(/^(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM(?:[1-9]|¹|²|³)|LPT(?:[1-9]|¹|²|³))$/i.test(stem)){
+  // 与后端 validate.RESERVED_NAMES 完全对齐（原来漏了 CLOCK$、COM0、LPT0）。
+  // 依据：Microsoft Learn《命名文件、路径和命名空间》——保留名带扩展名同样非法。
+  if(/^(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|CLOCK\$|COM[0-9¹²³]|LPT[0-9¹²³])$/i.test(stem)){  // modified
     return '与系统保留名冲突';
   }
   if(/[ .]$/.test(name)) return '结尾不能是空格或句点';
@@ -921,6 +958,9 @@ function nameError(name){
 // 手工编辑、对照表和 AI 共用：先校验单名，再按目录检查同批重名。
 function revalidateRows(changedRows){
   const changed = changedRows || new Set();
+  // 手工编辑 / 对照表导入 / AI 建议都会带 changed 集合进来；打标记后，
+  // 重新预览才知道哪些新名必须保留（见 preview 的 manual Map）。
+  for(const r of changed) r._manual = true;  // modified
   const groups = new Map();
   for(const r of S.rows){
     if(nameError(r.new_name)) continue;
@@ -943,11 +983,14 @@ function revalidateRows(changedRows){
     }else if(duplicate){
       r.status = 'conflict';
       r.reason = '同批内有 ' + groups.get(key).length + ' 个文件重名';
-    }else if(r.new_name === r._previewName && r._previewStatus === 'conflict'
-             && r._previewReason === '目标名已存在'){
-      // 前端无法探测磁盘；服务端已发现的现存目标冲突不能在校验时丢掉。
-      r.status = 'conflict';
-      r.reason = r._previewReason;
+    }else if(r.new_name === r._previewName && r._previewStatus === 'conflict'  // modified
+             && r._previewReason && !r._previewReason.startsWith('同批内')){   // modified
+      // 服务端预览发现的冲突一律保留：磁盘已有目标、父子目录同批等前端探不到。
+      // 原来只留 '目标名已存在' 一种，手工改任意一行后父子冲突行会变绿"可改"，
+      // 被全选勾上后触发后端整批 ValueError，把无辜条目一起拖垮。
+      // "同批内有 N 个文件重名" 例外：交给上面的 duplicate 按当前值重算。
+      r.status = 'conflict';  // modified
+      r.reason = r._previewReason;  // modified
     }else{
       r.status = 'ok';
       if(changed.has(r) || (oldStatus === 'conflict' && oldReason.startsWith('同批内'))){
@@ -1107,6 +1150,13 @@ function updateStatFromRows(){
   $('s-iv').textContent = c.iv;
   refreshExecBtn();
   syncHeaderCheckbox();
+  // 有手工名时按钮可点并显示条数，让"新名被保留"这件事在界面上可见。
+  const mb = $('btnResetManual');  // modified
+  if(mb){  // modified
+    const n = S.rows.filter(r => r._manual).length;  // modified
+    mb.disabled = n === 0;  // modified
+    mb.textContent = n ? `↺ 恢复规则计算（${n}）` : '↺ 恢复规则计算';  // modified
+  }  // modified
 }
 
 function refreshExecBtn(){
@@ -1332,10 +1382,19 @@ async function showShell(){
   try{
     const s = await api('/api/shell');
     S.shell = s;
-    $('shState').textContent = s.installed ? '已安装' : (s.supported ? '未安装' : '当前系统不支持');
-    $('shState').style.color = s.installed ? 'var(--green)' : 'var(--yellow)';
-    $('shInfo').textContent = s.supported
-      ? ('调用：' + s.python + '  launcher.py')
+    // 后端算出的 needs_reinstall / partial 原来没被消费，目录搬家或注册表残缺时
+    // 界面仍显示绿色"已安装"，右键点了却没反应。
+    const bad = !!(s.needs_reinstall || s.partial);  // modified
+    $('shState').textContent = !s.installed  // modified
+      ? (s.supported ? '未安装' : '当前系统不支持')  // modified
+      : (s.installed_all ? '已安装' : '部分安装');  // modified
+    $('shState').style.color = (s.installed_all && !bad) ? 'var(--green)' : 'var(--yellow)';  // modified
+    const tips = [];  // modified
+    if(s.partial) tips.push('只装了一部分右键位置，请重新点「安装右键菜单」');  // modified
+    if(s.needs_reinstall) tips.push('工具目录搬过家或注册表指向旧路径，请重新点「安装右键菜单」');  // modified
+    if(!s.launcher_exists) tips.push('找不到 launcher.py，请先补齐程序文件');  // modified
+    $('shInfo').textContent = s.supported  // modified
+      ? ('调用：' + s.python + '  launcher.py' + (tips.length ? '\n⚠ ' + tips.join('；') : ''))  // modified
       : '仅在 Windows 上可用';
   }catch(e){
     $('shState').textContent = '读取失败：' + e.message;
@@ -1493,6 +1552,15 @@ async function restoreNoise(){
 }
 
 /* ---------------- 排序 / 导出 / 导入 ---------------- */
+// 手工 / 导入 / AI 写入的新名在重算预览时会保留，这里提供显式的一键清除入口。
+function resetManualNames(){  // modified
+  const n = S.rows.filter(r => r._manual).length;  // modified
+  if(!n) return toast('当前没有手工修改的新名', 'err');  // modified
+  for(const r of S.rows) delete r._manual;  // modified
+  preview();  // modified
+  toast('已清除 ' + n + ' 条手工新名，恢复规则计算', 'ok');  // modified
+}  // modified
+
 function toggleSort(){
   S.sortDesc = !S.sortDesc;
   $('sortDir').textContent = S.sortDesc ? '↓' : '↑';
@@ -1529,7 +1597,8 @@ function exportList(){
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(a.href);
+  // Firefox 等在 a.click() 后立刻回收 blob URL 会拿到空文件，延后释放。
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);  // modified
   toast('已导出 ' + rows.length + ' 条', 'ok');
 }
 
@@ -1553,7 +1622,9 @@ function splitPair(line){
   }
   cells.push(field);
   // 去掉本工具导出时添加的公式防护符，保证自己的 CSV 可无损重导入。
-  const clean = v => String(v || '').trim().replace(/^'(?=[=+\-@])/, '');
+  // csvCell 会把 ' 加在带前导空格的公式前（' =SUM），原正则漏掉中间的空格，
+  // 导致本工具导出的 CSV 重导入后名字多一个单引号。
+  const clean = v => String(v || '').trim().replace(/^'\s*(?=[=+\-@])/, '');  // modified
   return [clean(cells[0]), clean(cells[1])];
 }
 

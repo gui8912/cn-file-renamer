@@ -101,4 +101,53 @@ assert.strictEqual(run("S.rows[1].status"), 'conflict');
 run(`S.rows[0].new_name='c.txt'; S.rows[1].new_name='c.txt'; revalidateRows(new Set());`);
 assert.strictEqual(run("S.rows.every(r => r.status === 'conflict')"), true);
 
-console.log('frontend tests: OK');
+// ===== 2026-11-05 审计回归：以下整段为新增，整体视为 // modified =====
+// modified: nameError 必须与后端 validate.RESERVED_NAMES 对齐（原来漏 CLOCK$/COM0/LPT0）。
+assert(run("nameError('CLOCK$.txt')").includes('保留名'));
+assert(run("nameError('COM0.txt')").includes('保留名'));
+assert(run("nameError('LPT0.txt')").includes('保留名'));
+assert(run("nameError('CONIN$.txt')").includes('保留名'));
+assert(run("nameError('a\\uD800b.txt')").includes('孤立代理项'));
+assert(run("nameError('\\uDC00x.txt')").includes('孤立代理项'));
+assert.strictEqual(run("nameError('😀正常.txt')"), '');  // 合法代理对不能被误判
+assert(run("nameError('😀'.repeat(128))").includes('过长'));
+
+// modified: 服务端标记的其他冲突（父子目录同批）不能在任意手工编辑后被重置为"可改"。
+run(`S.rows = [
+ {id:'1', path:'p1', old_name:'目录', new_name:'目录X', ext:'', dir:'D:',
+  status:'conflict', selected:false, _previewName:'目录X',
+  _previewStatus:'conflict',
+  _previewReason:'该目录内部还有同批条目，请先改内部或分两批处理'},
+ {id:'2', path:'p2', old_name:'a.txt', new_name:'b.txt', ext:'.txt',
+  dir:'D:', status:'ok', selected:true}
+]; revalidateRows(new Set([S.rows[1]]));`);
+assert.strictEqual(run("S.rows[0].status"), 'conflict');
+assert.strictEqual(run("S.rows[0].selected"), false);
+assert.strictEqual(run("S.rows[1]._manual"), true);  // 手工名被标记
+
+// modified: csvCell 给"前导空格 + 公式"加的防护符，重导入时要能还原。
+const csvLine = '"' + "' =SUM(A1)" + '","b.txt"';
+assert.deepStrictEqual(Array.from(run('splitPair(' + JSON.stringify(csvLine) + ')')),
+                       ['=SUM(A1)', 'b.txt']);
+
+// modified: 重新预览必须保留手工名：原来只继承 selected，改一下排序/规则就静默丢掉。
+context.fetch = async () => ({ok: true, json: async () => ({
+  ok: true, sid: 's1', stat: {},
+  rows: [{id:'9', path:'p1', dir:'D:', old_name:'a.txt',
+          new_name:'规则算出的.txt', ext:'.txt', is_dir:false, size:1,
+          mtime:0, status:'ok', reason:'', selected:true, applied:[], notes:[]}]
+})});
+
+(async () => {
+  run(`S.root='D:'; S.sid='s1'; S.rows=[{id:'1', path:'p1', dir:'D:',
+    old_name:'a.txt', new_name:'手改.txt', ext:'.txt', status:'ok',
+    selected:true, _manual:true}];
+    renderRows=()=>{}; updateStatFromRows=()=>{};`);
+  await run('preview()');
+  assert.strictEqual(run("S.rows[0].new_name"), '手改.txt');
+  assert.strictEqual(run("S.rows[0]._manual"), true);
+  assert.strictEqual(run("S.rows[0].status"), 'ok');
+  run('preview = () => {}; resetManualNames();');  // 一键恢复规则计算
+  assert.strictEqual(run("S.rows.some(r => r._manual)"), false);
+  console.log('frontend tests: OK');
+})().catch(e => { console.error(e); process.exitCode = 1; });

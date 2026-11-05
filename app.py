@@ -380,22 +380,28 @@ class Api:
         # 不只比较根本身：C:\Windows\System32 这类系统目录子树也必须拒绝。
         if engine.is_path_blocked(real):
             return {'ok': False, 'error': '系统目录及其子目录不允许批量改名'}
-        cfg = engine.load_config()
-        if any(os.path.normcase(os.path.normpath(r)) == np for r in cfg['trusted_roots']):
-            return {'ok': True, 'trusted_roots': cfg['trusted_roots']}
-        cfg['trusted_roots'].append(os.path.normpath(real))
-        engine.save_config(cfg)
+        # 右键 launcher 是另一个进程，读改写必须整段持跨进程锁，
+        # 否则两边各自基于旧 config 写回，会互相覆盖掉刚加的授权目录。
+        with engine.config_lock():  # modified
+            cfg = engine.load_config()  # modified
+            if any(os.path.normcase(os.path.normpath(r)) == np  # modified
+                   for r in cfg['trusted_roots']):  # modified
+                return {'ok': True, 'trusted_roots': cfg['trusted_roots']}  # modified
+            cfg['trusted_roots'].append(os.path.normpath(real))  # modified
+            engine.save_config(cfg)  # modified
         return {'ok': True, 'trusted_roots': cfg['trusted_roots']}
 
     @staticmethod
     def remove_root(path):
         if not isinstance(path, str) or not path:
             return {'ok': False, 'error': '路径为空或类型错误'}
-        cfg = engine.load_config()
-        np = os.path.normcase(os.path.normpath(os.path.abspath(path)))
-        cfg['trusted_roots'] = [r for r in cfg['trusted_roots']
-                                if os.path.normcase(os.path.normpath(os.path.abspath(r))) != np]
-        engine.save_config(cfg)
+        with engine.config_lock():  # modified
+            cfg = engine.load_config()  # modified
+            np = os.path.normcase(os.path.normpath(os.path.abspath(path)))  # modified
+            cfg['trusted_roots'] = [r for r in cfg['trusted_roots']  # modified
+                                    if os.path.normcase(os.path.normpath(  # modified
+                                        os.path.abspath(r))) != np]  # modified
+            engine.save_config(cfg)  # modified
         return {'ok': True, 'trusted_roots': cfg['trusted_roots']}
 
     @staticmethod

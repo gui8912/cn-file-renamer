@@ -8,6 +8,7 @@ zhconv 来自 vendor/ 目录（纯 Python，无需 pip 安装）。
 import os
 import re
 import sys
+import unicodedata  # modified: NFC 归一化，来源 Microsoft PowerToys PowerRename 的 SanitizeAndNormalize()
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _VENDOR = os.path.join(os.path.dirname(_HERE), 'vendor')
@@ -47,7 +48,19 @@ _NAME_SAFE = '喆甯陞鉅迺牠妳'
 
 def to_simplified(text):
     """繁体 -> 简体，并做异体字归一；人名常用字保持原样。"""
-    placeholders = {ch: chr(0xE000 + i) for i, ch in enumerate(_NAME_SAFE)}
+    # 来源场景：Microsoft PowerToys PowerRename 的 SanitizeAndNormalize() 明确
+    # 「先 NormalizeString(NFC) 再清洗」。用途：NFD 文件名（macOS / 网页拷贝）
+    # 里的组合声调符如 U+0301 会被后面的符号清洗当非白名单字符删掉，
+    # cafe\u0301报告.pdf 会静默变成 cafe报告.pdf；先合成 café 才不会丢字。
+    text = unicodedata.normalize('NFC', text)  # modified
+    # 占位符原来固定用 U+E000..E006（BMP 私用区）。若文件名本身含这些码位，
+    # 反向还原会把用户原有字符误改成人名用字（U+E000 -> 喆）。
+    # 改用辅助平面私用区 U+F0000 起，并跳过原文已占用的码位。
+    n = len(_NAME_SAFE)  # modified
+    base = 0xF0000  # modified
+    while any(chr(base + i) in text for i in range(n)):  # modified
+        base += n  # modified
+    placeholders = {ch: chr(base + i) for i, ch in enumerate(_NAME_SAFE)}  # modified
     reverse = {v: k for k, v in placeholders.items()}
     protected = ''.join(placeholders.get(c, c) for c in text)
     if _HAS_ZHCONV:

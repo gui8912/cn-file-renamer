@@ -11,6 +11,7 @@
 5. 执行前落盘计划：日志先写盘再动手，crash 也能回滚
 """
 
+import contextlib  # modified: config_lock 用的上下文管理器
 import fnmatch
 import json
 import os
@@ -56,12 +57,72 @@ def load_config():
     return dict(_DEFAULT_CONFIG)
 
 
+@contextlib.contextmanager  # modified
+def config_lock():  # modified
+    """跨进程配置锁。
+
+    launcher.py 是独立进程，网页端 add_root 和右键自动授权可能同时做
+    "读 config -> 加一个目录 -> 写回"。只保证写文件原子还不够，后写的
+    会把先写的授权整个覆盖掉（lost update）。调用方应把整段读改写包进来：
+
+        with engine.config_lock():
+            cfg = engine.load_config()
+            ...
+            engine.save_config(cfg)
+    """
+    os.makedirs(DATA, exist_ok=True)  # modified
+    path = os.path.join(DATA, 'config.lock')  # modified
+    with _OP_LOCK:  # modified: 进程内也串行，避免同进程多 fd 上锁语义差异
+        with open(path, 'a+b') as f:  # modified
+            f.seek(0, os.SEEK_END)  # modified
+            if f.tell() == 0:  # modified
+                f.write(b'0')  # modified: 锁第 0 字节，文件不能是空的
+                f.flush()  # modified
+            f.seek(0)  # modified
+            if os.name == 'nt':  # modified
+                import msvcrt  # modified
+                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)  # modified
+            else:  # pragma: no cover  # modified
+                import fcntl  # modified
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # modified
+            try:  # modified
+                yield  # modified
+            finally:  # modified
+                f.seek(0)  # modified
+                if os.name == 'nt':  # modified
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)  # modified
+                else:  # pragma: no cover  # modified
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)  # modified
+
+
 def save_config(cfg):
     os.makedirs(DATA, exist_ok=True)
-    tmp = CONFIG + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, CONFIG)
+    # 日志写入早已改成唯一临时名，这里仍是固定 CONFIG + '.tmp'。
+    # launcher.py 是独立进程，右键自动授权时可能与服务端同时写白名单：
+    # 两边互踩同一个临时文件会让刚加的授权丢失，os.replace 还会抛异常。
+    # 对齐 _write_journal：唯一临时名 + fsync + 原子替换 + 退避重试 + 失败清理。
+    tmp = '%s.tmp.%s' % (CONFIG, uuid.uuid4().hex)  # modified
+    try:  # modified
+        for attempt in range(6):  # modified
+            try:  # modified
+                with open(tmp, 'w', encoding='utf-8') as f:  # modified
+                    json.dump(cfg, f, ensure_ascii=False, indent=2)  # modified
+                    f.flush()  # modified
+                    os.fsync(f.fileno())  # modified
+                os.replace(tmp, CONFIG)  # modified
+                return  # modified
+            except OSError:  # modified
+                # Windows 上并发 replace 到同一目标、杀软/同步盘短暂占用都会报
+                # PermissionError(13)，与 _write_journal 一样退避重试。
+                if attempt == 5:  # modified
+                    raise  # modified
+                time.sleep(0.03 * (attempt + 1))  # modified
+    finally:  # modified
+        if os.path.exists(tmp):  # modified
+            try:  # modified
+                os.unlink(tmp)  # modified
+            except OSError:  # modified
+                pass  # modified
 
 
 def _is_unc(p):
@@ -630,7 +691,16 @@ def _execute_impl(root, pairs, note=''):
     skipped = []
     seen_sources = set()
     for p in pairs:
-        src = os.path.abspath(p['src'])
+        # 畸形条目（缺 src / 类型不对）不能让整批抛 KeyError，
+        # 原来会一路冒到 Api.execute 变成 "KeyError: 'src'" 这种内部错误信息。
+        if not isinstance(p, dict):  # modified
+            skipped.append({'src': '（无效条目）', 'reason': '条目不是对象'})  # modified
+            continue  # modified
+        raw_src = p.get('src')  # modified
+        if not isinstance(raw_src, str) or not raw_src.strip():  # modified
+            skipped.append({'src': '（无效条目）', 'reason': '缺少合法的源文件路径'})  # modified
+            continue  # modified
+        src = os.path.abspath(raw_src)  # modified
         src_key = os.path.normcase(src)
         new_name = (p.get('new_name') or '').strip()
         if src_key in seen_sources:
