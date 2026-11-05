@@ -19,6 +19,7 @@ import re
 import stat
 import threading
 import time
+import unicodedata  # modified: 判定「只差 NFC 编码」的改名，给用户明确提示
 import uuid
 
 from . import rules, text_norm, validate
@@ -362,6 +363,19 @@ def sort_items(items, by='name', desc=False):
     return sorted(items, key=key, reverse=bool(desc))
 
 
+def _nfc_same(a, b):  # modified
+    """两个名字是否只差 Unicode 组合形式（NFC 后完全相等）。
+
+    韩文、越南语、带声调拼音常以 NFD 存储：NFC 归一化后字符串变了、字节变了，
+    但在资源管理器里看起来一模一样。不提示的话用户会看到"可改"却看不出改了啥。
+    """
+    try:  # modified
+        return (a != b  # modified
+                and unicodedata.normalize('NFC', a) == unicodedata.normalize('NFC', b))  # modified
+    except (TypeError, ValueError):  # modified
+        return False  # modified
+
+
 def build_preview(items, enabled=None, params=None, lower_ext=False, auto_dedupe=False,
                   sort_by='name', sort_desc=False, target='name'):
     """
@@ -462,6 +476,10 @@ def build_preview(items, enabled=None, params=None, lower_ext=False, auto_dedupe
             notes.append('含非常用字：%s' % ''.join(rare))
         if ctx.get('errors'):
             notes.append('规则异常：%s' % '; '.join(ctx['errors']))
+
+        # 只差 NFC 编码的改名必须说清楚，否则用户看到"可改"却认为名字没变。  # modified
+        if status == 'ok' and _nfc_same(name, new_name):  # modified
+            reason = 'Unicode 归一化（显示相同，编码不同）'  # modified
 
         out.append({
             'id': uuid.uuid4().hex[:12],

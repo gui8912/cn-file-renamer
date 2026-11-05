@@ -275,7 +275,7 @@ details.cfg .inner{padding:0 11px 11px}
   resize:vertical;min-height:62px;line-height:1.55;
 }
 .ai-ins:focus{border-color:var(--accent)}
-.hintline{color:var(--dim);font-size:11.5px;margin:6px 0 0;line-height:1.6}
+.hintline{color:var(--dim);font-size:11.5px;margin:6px 0 0;line-height:1.6;white-space:pre-line}  /* modified: 让多行提示（右键菜单重装指引）真正换行 */
 
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -1571,6 +1571,9 @@ function csvCell(s){
   let v = String(s ?? '');
   // 仅字符串字段做公式注入防护；数值列不走这里，避免误伤普通负数。
   if(/^[=+\-@]/.test(v.replace(/^\s+/, ''))) v = "'" + v;
+  // 名字本身以 ' 开头且紧跟公式字符时再补一个 '（Excel 里 '' 表示字面单引号）。
+  // 否则重导入会把用户自己的 ' 当成防护符删掉：'=报告.txt -> =报告.txt。  // modified
+  else if(/^'\s*[=+\-@]/.test(v)) v = "'" + v;  // modified
   return '"' + v.replace(/"/g, '""') + '"';
 }
 
@@ -1622,9 +1625,15 @@ function splitPair(line){
   }
   cells.push(field);
   // 去掉本工具导出时添加的公式防护符，保证自己的 CSV 可无损重导入。
-  // csvCell 会把 ' 加在带前导空格的公式前（' =SUM），原正则漏掉中间的空格，
-  // 导致本工具导出的 CSV 重导入后名字多一个单引号。
-  const clean = v => String(v || '').trim().replace(/^'\s*(?=[=+\-@])/, '');  // modified
+  // csvCell 的防护符要能原样退回：
+  //   单层 ' 是给公式加的（' =SUM -> =SUM）；
+  //   双层 '' 表示名字本身就以 ' 开头（''=报告.txt -> '=报告.txt）。
+  const clean = v => {  // modified
+    const s = String(v || '').trim();  // modified
+    // 两层防护是互斥的：先判双层，不能串行 replace，否则还原出的 ' 会被再删一次。
+    if(/^''(?=[=+\-@])/.test(s)) return s.slice(1);  // modified
+    return s.replace(/^'\s*(?=[=+\-@])/, '');  // modified
+  };  // modified
   return [clean(cells[0]), clean(cells[1])];
 }
 

@@ -588,6 +588,10 @@ class Api:
             return {'ok': False, 'error': 'enabled/params 必须是对象'}
         if not name:
             return {'ok': False, 'error': '名字为空'}
+        # 试名字只用来看规则效果，真实文件名上限 255；给足余量后仍要设上限，
+        # 否则 4 MiB 请求体能塞进百万字符，跑完整条管线要十几秒。  # modified
+        if len(name) > 1000:  # modified
+            return {'ok': False, 'error': '名字过长（超过 1000 字符）'}  # modified
         st = rules.apply_pipeline(name, enabled, params, {'index': 0, 'total': 1, 'ext': ''})
         new_stem, applied, ctx = st
         return {

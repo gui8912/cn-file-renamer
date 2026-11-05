@@ -130,6 +130,13 @@ const csvLine = '"' + "' =SUM(A1)" + '","b.txt"';
 assert.deepStrictEqual(Array.from(run('splitPair(' + JSON.stringify(csvLine) + ')')),
                        ['=SUM(A1)', 'b.txt']);
 
+// modified: 名字本身就以 '= 开头时，必须用双层防护，重导入要原样退回。
+const oddName = "'=报告.txt";
+const oddCell = run('csvCell(' + JSON.stringify(oddName) + ')');
+assert.deepStrictEqual(
+  Array.from(run('splitPair(' + JSON.stringify(oddCell + ',"新名.txt"') + ')')),
+  [oddName, '新名.txt']);
+
 // modified: 重新预览必须保留手工名：原来只继承 selected，改一下排序/规则就静默丢掉。
 context.fetch = async () => ({ok: true, json: async () => ({
   ok: true, sid: 's1', stat: {},

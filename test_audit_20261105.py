@@ -7,9 +7,11 @@
 """
 
 import os  # modified
+import shutil  # modified
 import sys  # modified
 import tempfile  # modified
 import threading  # modified
+import unicodedata  # modified
 import unittest  # modified
 from unittest import mock  # modified
 
@@ -120,6 +122,44 @@ class ConfigWriteRegression(unittest.TestCase):  # modified
         self.assertTrue(os.path.exists(engine.CONFIG))  # modified
 
 
+class NfcOnlyRenameRegression(unittest.TestCase):  # modified
+    """R-01（复审补修）：只差 NFC 编码的改名必须在预览里说明原因。
+
+    韩文 / 越南语 / 带声调拼音常以 NFD 存储，NFC 后字符串与字节都变，
+    但资源管理器里看起来一模一样；不提示的话用户会以为"改了却没变化"。
+    """
+
+    def test_nfc_only_change_is_explained(self):  # modified (R-01)
+        d = tempfile.mkdtemp()  # modified
+        try:  # modified
+            name = unicodedata.normalize('NFD', '한국어보고서.txt')  # modified
+            p = os.path.join(d, name)  # modified
+            with open(p, 'w', encoding='utf-8') as fh:  # modified
+                fh.write('x')  # modified
+            items = [{'name': name, 'dir': d, 'path': p,  # modified
+                      'is_dir': False, 'size': 1, 'mtime': 0}]  # modified
+            rows = engine.build_preview(items, None, None)  # modified
+            self.assertEqual(rows[0]['status'], 'ok')  # modified
+            self.assertIn('Unicode 归一化', rows[0]['reason'])  # modified
+            self.assertNotEqual(rows[0]['old_name'], rows[0]['new_name'])  # modified
+        finally:  # modified
+            shutil.rmtree(d, ignore_errors=True)  # modified
+
+    def test_plain_name_has_no_extra_reason(self):  # modified (R-01 回归)
+        d = tempfile.mkdtemp()  # modified
+        try:  # modified
+            p = os.path.join(d, '普通文件.txt')  # modified
+            with open(p, 'w', encoding='utf-8') as fh:  # modified
+                fh.write('x')  # modified
+            items = [{'name': '普通文件.txt', 'dir': d, 'path': p,  # modified
+                      'is_dir': False, 'size': 1, 'mtime': 0}]  # modified
+            rows = engine.build_preview(items, None, None)  # modified
+            self.assertNotIn('Unicode', rows[0]['reason'])  # modified
+        finally:  # modified
+            shutil.rmtree(d, ignore_errors=True)  # modified
+
+
+@unittest.skipUnless(os.name == 'nt', '右键菜单注册表用例仅适用于 Windows')  # modified
 class ShellStatusRegression(unittest.TestCase):  # modified
     """F-06：部分安装不再误报「已安装」。"""
 
