@@ -157,5 +157,26 @@ class OrdinalSingleTest(unittest.TestCase):
             self.assertEqual(one('cn_num', src, {'ordinal_single': True}), want, src)
 
 
+class RegexSpaceTest(unittest.TestCase):  # modified
+    """查找替换必须能删空格：pattern 里的空格曾被 .strip() 吞掉。"""  # modified
+
+    def test_literal_space_pattern(self):  # modified
+        self.assertEqual(one('regex', '新版GMP 第九章 第一部分',  # modified
+                             {'pattern': ' ', 'repl': ''}),  # modified
+                         '新版GMP第九章第一部分')  # modified
+
+    def test_whitespace_class_pattern(self):  # modified
+        self.assertEqual(one('regex', 'A  B\tC',  # modified
+                             {'pattern': r'\s+', 'repl': ''}), 'ABC')  # modified
+
+    def test_multiple_spaces_as_pattern(self):  # modified
+        self.assertEqual(one('regex', '甲  乙 丙',  # modified
+                             {'pattern': '  ', 'repl': '-'}), '甲-乙 丙')  # modified
+
+    def test_empty_pattern_still_disabled(self):  # modified
+        self.assertEqual(one('regex', 'A B',  # modified
+                             {'pattern': '', 'repl': 'X'}), 'A B')  # modified
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

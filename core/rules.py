@@ -104,8 +104,11 @@ def _r_regex(stem, p, ctx):
     """
     查找替换。替换串支持两种捕获组写法：$1 和 \\1 都认（PowerRename 用 $1）。
     """
-    pat = (p.get('pattern') or '').strip()
-    if not pat:
+    # 不能 strip：用户在「查找」里填一个空格来删空格时，strip 会把 pattern
+    # 清成空串，规则直接原样返回，表现就是「查找替换删不掉空格」。
+    # 只用空串判断「没填」，纯空白属于合法查找内容。
+    pat = p.get('pattern') or ''
+    if pat == '':
         return stem
     flags = re.I if p.get('ignore_case', True) else 0
     try:
@@ -600,6 +603,7 @@ RULES = [
             {'key': 'ignore_case', 'type': 'bool', 'label': '忽略大小写', 'default': True},
             {'key': 'all', 'type': 'bool', 'label': '替换全部（否则只换第一个）', 'default': True},
             {'key': 'help', 'type': 'note', 'label':
+                '删空格：查找框填一个空格（或 \\s+ 连同制表符一起删），「替换为」留空；'
                 '例：查找 (\\d{4})-(\\d{2}) 替换 $1年$2月；查找 ^ 替换 prefix_'},
         ], 'fn': _r_regex,
     },

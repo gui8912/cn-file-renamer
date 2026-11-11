@@ -198,5 +198,52 @@ assert.strictEqual(
   fakeEl('excludePat').value = '';
   await run('scan(false)');
   assert(run('_toastMsg').includes('目录是空的'), '0 项时未区分空目录');
+
+  // modified: 「原文件名」列头排序，与工具栏下拉框 / 升降序按钮保持联动。
+  fakeEl('sortBy').value = 'size';
+  run('S.sortDesc = true; syncSortUI();');
+  assert.strictEqual(fakeEl('thOldMark').textContent, '↕', '非名称排序时列头不应显示升降序');
+  run('sortByOldName()');
+  assert.strictEqual(fakeEl('sortBy').value, 'name', '点列头应切到按名称排序');
+  assert.strictEqual(run('S.sortDesc'), false, '从其它排序切过来应先给升序');
+  assert.strictEqual(fakeEl('thOldMark').textContent, '↑');
+  assert.strictEqual(fakeEl('sortDir').textContent, '↑');
+  run('sortByOldName()');
+  assert.strictEqual(run('S.sortDesc'), true, '再点一次应切换为降序');
+  assert.strictEqual(fakeEl('thOldMark').textContent, '↓');
+
+  // modified: 反选只翻转「可见 + 可改」的行；不可改的行保持未勾。
+  fakeEl('kw').value = '';
+  run(`S.rows = [
+    {id:'1', path:'p1', old_name:'A.txt', new_name:'B.txt', status:'ok', selected:true, dir:'D:'},
+    {id:'2', path:'p2', old_name:'C.txt', new_name:'D.txt', status:'ok', selected:false, dir:'D:'},
+    {id:'3', path:'p3', old_name:'E.txt', new_name:'F.txt', status:'conflict', selected:true, dir:'D:'}
+  ];`);
+  run('invertSelection()');
+  assert.strictEqual(run("S.rows.map(r=>r.selected).join(',')"), 'false,true,false');
+  assert(run('_toastMsg').includes('反选后勾选 1 条'), '反选要有明确反馈');
+
+  // modified: 名称筛选隐藏的行不能进入执行范围，反选也要把它的勾选清掉。
+  fakeEl('kw').value = 'A';
+  run(`S.rows = [
+    {id:'1', path:'p1', old_name:'A.txt', new_name:'B.txt', status:'ok', selected:true, dir:'D:'},
+    {id:'2', path:'p2', old_name:'Z.txt', new_name:'Y.txt', status:'ok', selected:true, dir:'D:'}
+  ];`);
+  assert.strictEqual(run('executableRows().length'), 1, '隐藏行不能被执行');
+  run('invertSelection()');
+  assert.strictEqual(run("S.rows.map(r=>r.selected).join(',')"), 'false,false');
+  assert(run('_toastMsg').includes('已取消勾选'), '需说明隐藏行被取消勾选');
+  fakeEl('kw').value = '';
+
+  // modified: 浏览选目录由服务端一步完成授权 + 扫描，前端只同步会话并预览。
+  context.fetch = async () => ({ok: true, json: async () => ({
+    ok: true, path: 'D:/m3u8dl/new02/新版医疗器械GMP文件训练营',
+    root: 'D:\\m3u8dl\\new02\\新版医疗器械GMP文件训练营',
+    sid: 's-bridge', count: 23, trusted_roots: ['D:\\m3u8dl'], auth_only: false
+  })});
+  await run('pickFolder(false)');
+  assert.strictEqual(run('S.sid'), 's-bridge');
+  assert(run('S.root').includes('新版医疗器械GMP文件训练营'));
+  assert(run('_toastMsg').includes('已加入 23 项'), '应报告加入条数');
   console.log('frontend tests: OK');
 })().catch(e => { console.error(e); process.exitCode = 1; });

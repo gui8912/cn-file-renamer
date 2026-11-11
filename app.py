@@ -31,7 +31,8 @@ WEB = os.path.join(BASE, 'web')
 HOST = '127.0.0.1'
 
 # 单用户、单活动清单；sid 防止两个标签页交替扫描后把 A 的规则套到 B 上。
-_SESSION = {'root': '', 'items': [], 'recursive': False, 'focus': None, 'sid': ''}
+_SESSION = {'root': '', 'items': [], 'recursive': False, 'focus': None, 'sid': '',
+           'bridge_rev': 0}  # modified: 外部插件推路径后，页面据此自动刷新
 _LOCK = threading.Lock()
 _INSTANCE_LOCK = None
 
@@ -234,6 +235,10 @@ class Api:
                 _SESSION['focus'] = keys
                 if not _SESSION.get('sid'):
                     _SESSION['sid'] = uuid.uuid4().hex[:12]
+                # modified: 外部插件推入路径后，页面轮询到 bridge_rev 变化就自动刷新。
+                # 页面自身的操作不递增，避免重复 preview 打断正在进行的编辑。
+                if isinstance(payload, dict) and payload.get('bridge'):  # modified
+                    _SESSION['bridge_rev'] = _SESSION.get('bridge_rev', 0) + 1  # modified
             if first_dir and not _SESSION['root']:
                 _SESSION['root'] = first_dir
 
@@ -405,27 +410,52 @@ class Api:
         return {'ok': True, 'trusted_roots': cfg['trusted_roots']}
 
     @staticmethod
-    def pick_folder():
-        """起一个独立进程弹系统目录选择框，避免 tkinter 与 HTTP 线程冲突。"""
-        code = (
-            'import tkinter as tk\n'
-            'from tkinter import filedialog\n'
-            'r = tk.Tk()\n'
-            'r.withdraw()\n'
-            'r.attributes("-topmost", True)\n'
-            'p = filedialog.askdirectory(title="选择要批量改名的文件夹")\n'
-            'print(p or "")\n'
-        )
+    def pick_folder(payload=None):
+        """弹 Windows 原生目录对话框，并把所选目录直接加入当前会话。
+
+        原来用 tkinter 的 askdirectory（底层 tk_chooseDirectory，Tk 自绘目录树），
+        在中文 Windows 上常显示不出本地盘符/目录。改由外部插件 folder_bridge.py
+        调 SHBrowseForFolderW + BIF_NEWDIALOGSTYLE 弹原生对话框。
+
+        与旧实现的差别：不只返回路径，而是顺手完成授权 + 扫描 + 写入会话，
+        前端拿到后直接预览即可，不用再自行 add_root/scan，也不会被页面上残留的
+        include/exclude 筛选排空（换目录本就该看到该目录全部文件）。
+        """
+        bridge = os.path.join(BASE, 'folder_bridge.py')
+        if not os.path.isfile(bridge):
+            return {'ok': False, 'error': '外部插件 folder_bridge.py 缺失'}
         try:
-            out = subprocess.run([sys.executable, '-c', code],
-                                 capture_output=True, text=True, timeout=600)
-            path = (out.stdout or '').strip().splitlines()
-            path = path[-1].strip() if path else ''
-            if path:
-                return {'ok': True, 'path': path}
-            return {'ok': False, 'error': '未选择目录'}
+            out = subprocess.run([sys.executable, bridge, '--pick'],
+                                 capture_output=True, text=True,
+                                 encoding='utf-8', errors='replace', timeout=600)
+            lines = [x.strip() for x in (out.stdout or '').splitlines() if x.strip()]
+            path = lines[-1] if lines else ''
         except Exception as e:
             return {'ok': False, 'error': '无法弹出目录选择框：%s' % e}
+        if not path or not os.path.isdir(path):
+            return {'ok': False, 'error': '未选择目录'}
+        real = os.path.abspath(path)
+
+        a = Api.add_root(real)
+        if not a.get('ok'):
+            return {'ok': False, 'error': a.get('error', '授权失败'), 'path': real}
+
+        # 授权弹窗里的「浏览…」只负责授权，不该顺手换掉用户正在处理的清单。
+        if isinstance(payload, dict) and payload.get('auth_only'):
+            return {'ok': True, 'path': real, 'auth_only': True,
+                    'trusted_roots': a['trusted_roots']}
+
+        items, truncated = engine.scan(real, False, False, '')
+        with _LOCK:
+            _SESSION['root'] = real
+            _SESSION['items'] = items
+            _SESSION['recursive'] = False
+            _SESSION['focus'] = None
+            _SESSION['sid'] = uuid.uuid4().hex[:12]
+            new_sid = _SESSION['sid']
+        return {'ok': True, 'path': real, 'root': real, 'sid': new_sid,
+                'count': len(items), 'truncated': truncated,
+                'trusted_roots': a['trusted_roots']}
 
     # ---------- 扫描 ----------
     @staticmethod
@@ -792,8 +822,14 @@ class Handler(BaseHTTPRequestHandler):
                 qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
                 self._send(Api.journal_detail((qs.get('id') or [''])[0]))
             elif path == '/api/ping':
-                self._send({'ok': True, 'app': 'rename-tool-cn',
-                            'version': VERSION, 'base': BASE})
+                # modified: 外部插件要拿 sid；页面轮询 bridge_rev 感知插件推入的新条目。
+                # 先复制会话状态再释放锁，避免持锁写 socket。
+                with _LOCK:  # modified
+                    st = {'sid': _SESSION.get('sid', ''),  # modified
+                          'root': _SESSION.get('root', ''),  # modified
+                          'bridge_rev': _SESSION.get('bridge_rev', 0)}  # modified
+                self._send(dict({'ok': True, 'app': 'rename-tool-cn',  # modified
+                                 'version': VERSION, 'base': BASE}, **st))  # modified
             else:
                 self._serve_file(path)
         except Exception:

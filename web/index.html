@@ -156,6 +156,11 @@ section.view{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;
   border-bottom:1px solid var(--line2);height:30px;
   color:var(--dim);font-size:11.5px;letter-spacing:.4px;font-weight:600;
 }
+.th-sort{cursor:pointer;user-select:none;display:flex;align-items:center;gap:5px}
+.th-sort:hover{color:var(--fg)}
+.th-sort:focus-visible{outline:1px solid var(--accent);outline-offset:2px;border-radius:3px}
+.sortmark{color:var(--accent);font-size:13px;line-height:1}
+.sortmark.off{color:var(--dim);opacity:.6}
 .row{height:44px;padding:0 12px;font-size:12.5px;overflow:hidden}
 .row:hover{background:#141821}
 .row.sel{background:#152033}
@@ -336,7 +341,7 @@ details.cfg .inner{padding:0 11px 11px}
         <input id="kw" class="btn" style="background:var(--panel);width:150px;color:var(--fg)"
                placeholder="按名称筛选…" oninput="filterRows()">
 
-        <select id="sortBy" class="sel" onchange="preview()" title="排序决定序号的先后顺序">
+        <select id="sortBy" class="sel" onchange="sortChanged()" title="排序决定序号的先后顺序">
           <option value="name">按名称</option>
           <option value="mtime">按修改时间</option>
           <option value="size">按大小</option>
@@ -356,6 +361,7 @@ details.cfg .inner{padding:0 11px 11px}
 
         <button class="btn ghost" onclick="checkAll(true)">全选</button>
         <button class="btn ghost" onclick="checkAll(false)">全不选</button>
+        <button class="btn ghost" onclick="invertSelection()" title="把当前可见且可改的条目勾选状态反过来；被筛选隐藏的条目一律取消勾选">⇄ 反选</button>
         <button class="btn ghost" onclick="showAll()" title="取消拖放形成的聚焦，显示整个目录">显示全部</button>
         <button class="btn ghost" onclick="clearList()" title="清空列表，重新来过">清空列表</button>
         <button class="btn" onclick="preview()">↻ 生成预览</button>
@@ -374,7 +380,10 @@ details.cfg .inner{padding:0 11px 11px}
 
       <div class="thead">
         <div class="c-chk"><input type="checkbox" id="hchk" onchange="checkAll(this.checked)"></div>
-        <div class="c-old">原文件名</div>
+        <div class="c-old th-sort" id="thOld" role="button" tabindex="0"
+             onclick="sortByOldName()"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();sortByOldName();}"
+             title="点击按原文件名排序，再点切换升序 / 降序">原文件名 <span class="sortmark" id="thOldMark">↑</span></div>
         <div class="c-arw">→</div>
         <div class="c-new">新文件名（可直接改）</div>
         <div class="c-st">状态</div>
@@ -385,8 +394,8 @@ details.cfg .inner{padding:0 11px 11px}
           <div class="big">⌸</div>
           <div>扫描目录，或把文件直接拖到这里</div>
           <div style="font-size:11.5px;line-height:1.9">
-            也可以 Shift+右键文件选「复制为路径」，回到页面 Ctrl+V 粘贴<br>
-            （网页拿不到拖拽文件的完整路径，粘贴路径最可靠）
+            网页拿不到拖入文件的完整路径；想「拖进来就能用」，请双击 <b>目录助手.bat</b><br>
+            也可以 Shift+右键文件选「复制为路径」，回到页面 Ctrl+V 粘贴
           </div>
         </div>
       </div>
@@ -599,7 +608,10 @@ const S = {
 
 // 服务端 max_scan 默认 5000；这里不再二次截断，否则“扫描到了却永远改不到”。
 const renderedRows = () => S.rows;
-const executableRows = () => renderedRows().filter(r => r.status === 'ok' && r.selected);
+// modified: 名称筛选只是 CSS 隐藏，selected 不会自动清掉。执行范围必须再过一遍
+// rowVisible，否则「先全选 → 再输入筛选词」会把看不见的行也一起改名。
+const executableRows = () => renderedRows().filter(  // modified
+  r => r.status === 'ok' && r.selected && rowVisible(r));  // modified
 
 /* ---------------- 基础 ---------------- */
 const $ = id => document.getElementById(id);
@@ -656,6 +668,7 @@ async function boot(){
   renderRules();
   renderAuth();
   loadPresets();
+  syncSortUI();  // modified: 初始化列头排序箭头
 }
 
 function renderRules(){
@@ -806,25 +819,27 @@ async function removeRoot(p){
 }
 
 async function pickFolder(forAuth){
+  // modified: 交给外部插件弹 Windows 原生目录树；服务端已顺手完成授权 + 扫描，
+  // 这里只负责同步会话状态并刷新预览，不再自行 add_root/scan。
   toast('请在弹出的窗口里选择目录…');
   try{
-    const r = await api('/api/pick-folder', {});
+    const r = await api('/api/pick-folder', {auth_only: !!forAuth});  // modified
     if(!r.ok){ toast(r.error || '未选择', 'err'); return; }
-    if(forAuth){  // modified
-      // modified: 原来只把路径填进输入框、不动授权，选完看不到变化，误以为「没加进去」。
-      $('authPath').value = r.path;  // modified
-      await addRoot();  // modified: 选完直接完成授权
-      return;  // modified
-    }  // modified
-    $('path').value = r.path;
-    // modified: 统一分隔符再比对，避免正斜杠路径被误判成未授权而重复入库
-    if(!isCoveredByRoots(r.path, S.state.trusted_roots)){  // modified
-      const a = await api('/api/roots/add', {path: r.path});
-      if(!a.ok) return toast(a.error || '授权失败', 'err');
-      S.state.trusted_roots = a.trusted_roots;
-      renderAuth();
+    if(r.trusted_roots){  // modified
+      S.state.trusted_roots = r.trusted_roots;  // modified
+      renderAuth();  // modified
     }
-    await scan();
+    if(forAuth || r.auth_only){  // modified
+      if(!$('path').value) $('path').value = r.path;  // modified
+      toast('已授权。关闭本窗口，在顶部点「扫描」即可加入列表', 'ok');  // modified
+      return;  // modified
+    }
+    $('path').value = r.path;  // modified
+    S.root = r.root || r.path;  // modified
+    S.sid = r.sid || S.sid;  // modified
+    await preview();  // modified
+    toast(r.count ? ('已加入 ' + r.count + ' 项') : '该目录下没有符合条件的文件',
+          r.count ? 'ok' : 'err');  // modified
   }catch(e){ toast('选择目录失败：' + e.message, 'err'); }
 }
 
@@ -1176,6 +1191,32 @@ function checkAll(on){
   }
 }
 
+// modified: 反选。语义与全选保持一致：只翻转「当前可见 + 可改」的行；
+// 不可改的行、被名称筛选隐藏的行一律取消勾选，避免看不见的文件被带去执行。
+function invertSelection(){  // modified
+  let picked = 0, blocked = 0, hidden = 0;  // modified
+  S.rows.forEach(r => {  // modified
+    if(!rowVisible(r)){  // modified
+      hidden++;  // modified
+      r.selected = false;  // modified
+      return;  // modified
+    }
+    if(r.status !== 'ok'){  // modified
+      blocked++;  // modified
+      r.selected = false;  // modified
+      return;  // modified
+    }
+    r.selected = !r.selected;  // modified
+    if(r.selected) picked++;  // modified
+  });  // modified
+  refreshRenderedRows();  // modified
+  updateStatFromRows();  // modified
+  const msg = ['反选后勾选 ' + picked + ' 条可改条目'];  // modified
+  if(blocked) msg.push(blocked + ' 条因「无变化/冲突/非法」不可改');  // modified
+  if(hidden) msg.push(hidden + ' 条被名称筛选隐藏，已取消勾选');  // modified
+  toast(msg.join('；'), 'ok');  // modified
+}
+
 function updateStatFromRows(){
   const c = {change:0, un:0, cf:0, iv:0};
   for(const r of S.rows){
@@ -1348,7 +1389,7 @@ function loadPreset(){
   $('autoDedupe').checked = !!p.auto_dedupe;
   $('sortBy').value = p.sort_by || 'name';
   S.sortDesc = !!p.sort_desc;
-  $('sortDir').textContent = S.sortDesc ? '↓' : '↑';
+  syncSortUI();  // modified: 列头箭头要跟着预设一起变
   $('target').value = p.target || 'name';
   renderRules();
   schedulePreview();
@@ -1612,9 +1653,33 @@ function resetManualNames(){  // modified
   toast('已清除 ' + n + ' 条手工新名，恢复规则计算', 'ok');  // modified
 }  // modified
 
+// modified: 「原文件名」列头排序。排序会决定序号（seq 规则）的先后顺序，
+// 所以必须走后端 preview 重算，不能只在前端重排 DOM，否则编号与显示顺序会错位。
+function sortByOldName(){  // modified
+  if($('sortBy').value === 'name'){  // modified
+    S.sortDesc = !S.sortDesc;  // modified: 已按名称排，再点切换升/降序
+  }else{  // modified
+    $('sortBy').value = 'name';  // modified: 从其它排序切过来，先给升序
+    S.sortDesc = false;  // modified
+  }
+  syncSortUI();  // modified
+  preview();  // modified
+}  // modified
+
+function syncSortUI(){  // modified
+  $('sortDir').textContent = S.sortDesc ? '↓' : '↑';  // modified
+  const mark = $('thOldMark');  // modified
+  if(!mark) return;  // modified: 老页面缓存里没有列头标记时不能报错
+  const byName = $('sortBy').value === 'name';  // modified
+  mark.textContent = byName ? (S.sortDesc ? '↓' : '↑') : '↕';  // modified
+  mark.classList.toggle('off', !byName);  // modified
+}  // modified
+
+function sortChanged(){ syncSortUI(); preview(); }  // modified
+
 function toggleSort(){
   S.sortDesc = !S.sortDesc;
-  $('sortDir').textContent = S.sortDesc ? '↓' : '↑';
+  syncSortUI();  // modified
   preview();
 }
 
@@ -1882,6 +1947,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }catch(e){ toast('加入失败：' + e.message, 'err'); }
   }
+
+  // modified: 外部插件（拖放助手）把真实路径推给服务后，当前页面自动刷新，
+  // 不新开标签页、不丢已经调好的规则。只比较 bridge_rev，页面自身的操作
+  // 不会触发重复 preview，也就不会打断正在进行的表格编辑。
+  let lastBridgeRev = null;  // modified
+  setInterval(async () => {  // modified
+    try{  // modified
+      const p = await api('/api/ping');  // modified
+      const rev = p.bridge_rev || 0;  // modified
+      if(lastBridgeRev === null){ lastBridgeRev = rev; return; }  // modified
+      if(rev === lastBridgeRev) return;  // modified
+      lastBridgeRev = rev;  // modified
+      if(p.root) S.root = p.root;  // modified
+      if(p.sid) S.sid = p.sid;  // modified
+      if(p.root && !$('path').value) $('path').value = p.root;  // modified
+      await preview();  // modified
+      toast('已从拖放助手加入条目', 'ok');  // modified
+    }catch(e){ /* 服务重启或暂时不可达，下一轮再试 */ }  // modified
+  }, 1500);  // modified
 });
 </script>
 </body>

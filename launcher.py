@@ -55,7 +55,11 @@ def find_server():
                 if not data.get('ok') or data.get('app') != 'rename-tool-cn':
                     continue
                 # 多副本并存时必须认准本目录启动的实例，否则授权写进 A、页面却打开 B。
-                if os.path.normcase(data.get('base', '')) == os.path.normcase(BASE):
+                # modified: 必须 realpath —— 服务台用符号链接 apps\rename-cn 启动服务，
+                # ping.base 是链接路径，与项目真实路径字符串不等但指向同一目录，
+                # 原来用 normcase 直接比较会漏掉正在跑的服务，误判成「未启动」。
+                if os.path.normcase(os.path.realpath(data.get('base', ''))) == \
+                   os.path.normcase(os.path.realpath(BASE)):
                     return port
         except Exception:
             continue
