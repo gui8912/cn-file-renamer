@@ -324,6 +324,8 @@ details.cfg .inner{padding:0 11px 11px}
         <button class="btn sm" onclick="savePreset()" title="把当前规则组合存成方案">存</button>
         <button class="btn sm ghost" onclick="delPreset()" title="删除当前方案">删</button>
       </div>
+      <!-- modified: 默认全关要给一句可发现性说明，否则看起来像规则列表坏了 -->
+      <div class="hintline" style="margin:0;padding:6px 12px 0">默认全部关闭：勾需要的规则，或从「规则方案」一键套用。全关时预览都是「无变化」，勾上规则后才会出现「可改」条目。</div>
       <div class="rules" id="rules"></div>
       <div class="tester">
         <input id="testName" placeholder="试一个名字，看规则效果…" spellcheck="false">
@@ -655,6 +657,17 @@ function handleStale(r){
 }
 
 /* ---------------- 初始化 ---------------- */
+// modified: 界面初始状态 = 所有规则关闭。服务台启动或刷新页面都从这个干净状态开始，
+// modified: 需要哪条自己勾，或从「规则方案」一键套用；避免刷新后 7 条默认规则
+// modified: 自动开启、把预览里的新名悄悄改掉。
+// modified: 引擎侧 rules.default_enabled() 保持不变，仍供未显式传 enabled 的
+// modified: 内部调用使用；这里只决定 UI，不动后端规则与既有测试。
+function allOffEnabled(){  // modified
+  const out = {};  // modified
+  for(const r of ((S.state && S.state.rules) || [])) out[r.id] = false;  // modified
+  return out;  // modified
+}  // modified
+
 async function boot(){
   try{
     S.state = await api('/api/state');
@@ -662,8 +675,13 @@ async function boot(){
     toast('无法连接本地服务：' + e.message, 'err');
     return;
   }
-  S.enabled = Object.assign({}, S.state.default_enabled);
+  S.enabled = allOffEnabled();  // modified
   S.params = JSON.parse(JSON.stringify(S.state.default_params));
+  // modified: 浏览器刷新会自行恢复部分表单控件状态，显式归零会话级开关；
+  // modified: lowerExt 是持久化配置，仍按服务端值还原。
+  $('recursive').checked = false;  // modified
+  $('includeDirs').checked = false;  // modified
+  $('autoDedupe').checked = false;  // modified
   $('lowerExt').checked = !!S.state.lower_ext;
   renderRules();
   renderAuth();
@@ -1373,14 +1391,11 @@ function loadPreset(){
   if(!name) return;
   const p = S.presets.find(x => x.name === name);
   if(!p) return;
-  // enabled:{} 是“全部关闭”的有效值：显式空对象必须先把所有规则关掉。
-  // 旧方案的局部映射则从默认值开始覆盖。
-  S.enabled = Object.assign({}, S.state.default_enabled);
-  if(p.enabled && Object.keys(p.enabled).length === 0){
-    for(const r of S.state.rules) S.enabled[r.id] = false;
-  }else{
-    for(const rid in (p.enabled || {})) S.enabled[rid] = !!p.enabled[rid];
-  }
+  // modified: 从「全部关闭」基线套用方案，而不是从引擎默认组合叠加。
+  // modified: 局部映射的旧方案原本会被默认开启的 7 条规则悄悄补上，
+  // modified: 与「刷新后默认全关」不一致；enabled:{} 现在自然就是全关。
+  S.enabled = allOffEnabled();  // modified
+  for(const rid in (p.enabled || {})) S.enabled[rid] = !!p.enabled[rid];  // modified
   S.params = JSON.parse(JSON.stringify(S.state.default_params));
   for(const rid of Object.keys(p.params || {})){
     S.params[rid] = Object.assign(S.params[rid] || {}, p.params[rid]);

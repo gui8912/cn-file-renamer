@@ -245,5 +245,40 @@ assert.strictEqual(
   assert.strictEqual(run('S.sid'), 's-bridge');
   assert(run('S.root').includes('新版医疗器械GMP文件训练营'));
   assert(run('_toastMsg').includes('已加入 23 项'), '应报告加入条数');
+
+  // modified: 刷新 / 从服务台打开后，侧边栏所有规则必须默认关闭。
+  // modified: 后端 default_enabled 里 7 条是 ON，UI 不能照抄。
+  const stateRules = ['t2s','fullwidth','cn_num','noise','clean','date_front','trim','regex'];
+  context.fetch = async () => ({ok: true, json: async () => ({
+    ok: true,
+    default_enabled: {t2s:true, fullwidth:true, cn_num:true, noise:true,
+                      clean:true, date_front:true, trim:true, regex:false},
+    default_params: {},
+    rules: stateRules.map(id => ({id})),
+    trusted_roots: [], lower_ext: false
+  })});
+  run('S.enabled = {t2s:true, cn_num:true}; renderRules=()=>{}; schedulePreview=()=>{}; toast=()=>{};');
+  await run('boot()');
+  assert.strictEqual(run('Object.keys(S.enabled).length'), stateRules.length,
+                     '每条规则都要有明确的 false，不能留缺失键');
+  assert(run('Object.values(S.enabled).every(v => v === false)'),
+         '刷新后必须全部关闭');
+  assert.strictEqual(run('S.enabled.t2s'), false, '默认 ON 的繁转简也必须关掉');
+
+  // modified: 会话级开关显式归零，避免浏览器刷新自行恢复表单状态。
+  assert.strictEqual(fakeEl('recursive').checked, false);
+  assert.strictEqual(fakeEl('includeDirs').checked, false);
+  assert.strictEqual(fakeEl('autoDedupe').checked, false);
+
+  // modified: 套用「局部映射」的旧方案时，不能从默认组合里带出没写的规则。
+  run(`S.state = {default_enabled:{a:true,b:true,c:true}, default_params:{},
+    rules:[{id:'a'},{id:'b'},{id:'c'}]};
+  S.presets = [{name:'只开a', enabled:{a:true}, params:{}}];
+  renderRules=()=>{}; schedulePreview=()=>{}; toast=()=>{};`);
+  fakeEl('presetSel').value = '只开a';
+  run('loadPreset()');
+  assert.strictEqual(run('S.enabled.a'), true, '方案里写的规则要开');
+  assert.strictEqual(run('S.enabled.b'), false, '未写的规则不能被默认组合补成开启');
+  assert.strictEqual(run('S.enabled.c'), false);
   console.log('frontend tests: OK');
 })().catch(e => { console.error(e); process.exitCode = 1; });
