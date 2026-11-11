@@ -183,5 +183,43 @@ class BridgeRevTest(SessionMixin, unittest.TestCase):  # modified
         self.assertEqual(app_mod._SESSION['bridge_rev'], 1)  # modified
 
 
+class ModernDialogTest(SessionMixin, unittest.TestCase):  # modified
+    """现代对话框：记住上次目录、取消不误弹、接口不可用自动回退。"""  # modified
+
+    def test_last_folder_roundtrip(self):  # modified
+        state = os.path.join(self.tmp, 'bridge_state.json')  # modified
+        with mock.patch.object(bridge, 'STATE_FILE', state):  # modified
+            self.assertEqual(bridge.load_last_folder(), '')  # modified
+            bridge.save_last_folder(self.tmp)  # modified
+            self.assertEqual(bridge.load_last_folder(), self.tmp)  # modified
+
+    def test_last_folder_ignores_deleted_dir(self):  # modified
+        state = os.path.join(self.tmp, 'bridge_state.json')  # modified
+        with mock.patch.object(bridge, 'STATE_FILE', state):  # modified
+            bridge.save_last_folder(os.path.join(self.tmp, 'gone'))  # modified
+            self.assertEqual(bridge.load_last_folder(), '',  # modified
+                             '目录已删除时不能把对话框定位到无效路径')  # modified
+
+    def test_cancel_does_not_pop_a_second_dialog(self):  # modified
+        with mock.patch.object(bridge, '_modern_dialog', return_value=[]), \
+             mock.patch.object(bridge, '_legacy_pick_folder') as legacy:  # modified
+            self.assertIsNone(bridge.pick_native_folder())  # modified
+            legacy.assert_not_called()  # modified
+        with mock.patch.object(bridge, '_modern_dialog', return_value=[]):  # modified
+            self.assertEqual(bridge.pick_native_files(), [])  # modified
+
+    @unittest.skipUnless(bridge.IS_WIN, 'Windows only')  # modified
+    def test_unavailable_modern_falls_back_to_legacy(self):  # modified
+        with mock.patch.object(bridge, '_modern_dialog', return_value=None), \
+             mock.patch.object(bridge, '_legacy_pick_folder',  # modified
+                               return_value='D:\\legacy'):  # modified
+            self.assertEqual(bridge.pick_native_folder(), 'D:\\legacy')  # modified
+
+    def test_pick_files_handles_unavailable_modern(self):  # modified
+        with mock.patch.object(bridge, '_modern_dialog', return_value=None):  # modified
+            self.assertEqual(bridge.pick_native_files(), [],  # modified
+                             '接口不可用应安静返回空，不能崩')  # modified
+
+
 if __name__ == '__main__':  # modified
     unittest.main(verbosity=2)  # modified

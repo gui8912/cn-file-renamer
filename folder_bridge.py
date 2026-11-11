@@ -6,9 +6,11 @@
 原 pick_folder 用 tkinter 的 askdirectory，底层是 Tk 自绘的 tk_chooseDirectory，
 在中文 Windows 上常显示不出本地目录树。本插件完全绕开浏览器与 Tk：
 
-  --pick      弹 Windows 原生文件夹对话框（SHBrowseForFolderW + BIF_NEWDIALOGSTYLE），
-              把选中的真实路径打印到 stdout，供 app.py 的 /api/pick-folder 调用。
-  --drop      常驻一个置顶小窗口，接收资源管理器的 WM_DROPFILES 拖放，
+  --pick      弹 Windows 现代文件夹对话框（IFileOpenDialog + FOS_PICKFOLDERS，
+              带地址栏/搜索/文件列表），默认打开上次选过的目录；把真实路径打印到
+              stdout，供 app.py 的 /api/pick-folder 调用。COM 不可用时回退老式框。
+  --drop      常驻一个置顶小窗口：既能接收资源管理器的 WM_DROPFILES 拖放，也有
+              「选择文件…（可多选）」「选择文件夹…」两个按钮，点一下同样弹现代对话框。
               拿到真实路径后直接 POST 给本地服务，页面会自动刷新（不新开标签页）。
   --selftest  不弹任何窗口的自检，用于 CI / 笔记本首次运行验证。
 
@@ -206,15 +208,197 @@ if IS_WIN:
     _ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
 
 
-def pick_native_folder():
-    """弹原生目录树，返回真实路径；取消或非 Windows 返回 None。"""
+# ---- 现代文件/文件夹对话框：IFileOpenDialog（Vista+） ----
+# SHBrowseForFolderW 是 Win98 时代的老树形框，没有地址栏、不能搜索、不能看文件列表。
+# 这里手写 COM vtable 调用（纯 ctypes，无 comtypes/pywin32 依赖），按
+# Microsoft Learn 的 IFileDialog / IFileOpenDialog / IShellItem 接口顺序索引。
+# 若新旧接口都不可用，仍回退到老对话框，保证「至少能选」。
+_CLSID_FILE_OPEN_DIALOG = '{DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7}'
+_IID_IFILE_OPEN_DIALOG = '{D57C7288-D4AD-4768-BE02-9D969532D960}'
+_IID_ISHELLITEM = '{43826D1E-E718-42EE-BC55-A1E261C37BFE}'
+
+_FOS_NOCHANGEDIR = 0x00000008
+_FOS_PICKFOLDERS = 0x00000020
+_FOS_FORCEFILESYSTEM = 0x00000040
+_FOS_ALLOWMULTISELECT = 0x00000200
+_FOS_PATHMUSTEXIST = 0x00000800
+_FOS_FILEMUSTEXIST = 0x00001000
+_SIGDN_FILESYSPATH = 0x80058000
+_CLSCTX_ALL = 0x17
+
+# vtable 槽位：IUnknown(0..2) / IModalWindow(3) / IFileDialog(4..26) /
+# IFileOpenDialog(27..28) / IShellItem(3..7) / IShellItemArray(3..9)
+_VT_RELEASE = 2
+_VT_SHOW = 3
+_VT_SETOPTIONS = 9
+_VT_SETFOLDER = 12
+_VT_SETTITLE = 17
+_VT_GETRESULT = 20
+_VT_GETRESULTS = 27
+_VT_ITEM_DISPLAYNAME = 5
+_VT_ARRAY_COUNT = 7
+_VT_ARRAY_ITEMAT = 8
+
+STATE_FILE = os.path.join(BASE, 'data', 'bridge_state.json')  # 记住上次目录
+
+
+def load_last_folder():
+    """上次成功选择的目录；目录已被删掉就忽略，别让对话框定位到无效路径。"""
+    try:
+        with open(STATE_FILE, encoding='utf-8') as f:
+            p = (json.load(f).get('last_folder') or '').strip()
+        return p if p and os.path.isdir(p) else ''
+    except Exception:
+        return ''
+
+
+def save_last_folder(path):
+    try:
+        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+        with open(STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'last_folder': path}, f, ensure_ascii=False)
+    except Exception as e:
+        log('保存上次目录失败: %s' % e)
+
+
+if IS_WIN:
+    class GUID(ctypes.Structure):
+        _fields_ = [('Data1', ctypes.c_ulong), ('Data2', ctypes.c_ushort),
+                    ('Data3', ctypes.c_ushort), ('Data4', ctypes.c_ubyte * 8)]
+
+    _ole32.CLSIDFromString.argtypes = [_LPCWSTR, ctypes.POINTER(GUID)]
+    _ole32.CLSIDFromString.restype = ctypes.c_long
+    _ole32.CoCreateInstance.argtypes = [ctypes.POINTER(GUID), ctypes.c_void_p,
+                                        wintypes.DWORD, ctypes.POINTER(GUID),
+                                        ctypes.POINTER(ctypes.c_void_p)]
+    _ole32.CoCreateInstance.restype = ctypes.c_long
+    _shell32.SHCreateItemFromParsingName.argtypes = [
+        _LPCWSTR, ctypes.c_void_p, ctypes.POINTER(GUID),
+        ctypes.POINTER(ctypes.c_void_p)]
+    _shell32.SHCreateItemFromParsingName.restype = ctypes.c_long
+
+
+def _guid(text):
+    g = GUID()
+    if _ole32.CLSIDFromString(text, ctypes.byref(g)) != 0:
+        raise OSError('CLSIDFromString 失败: %s' % text)
+    return g
+
+
+def _vcall(obj, index, argtypes, *args):
+    """调用 COM 对象 vtable 第 index 个方法，返回 HRESULT(c_long)。"""
+    vtbl = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+    proto = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *argtypes)
+    return proto(vtbl[index])(obj, *args)
+
+
+def _shell_item_from_path(path):
+    iid = _guid(_IID_ISHELLITEM)
+    item = ctypes.c_void_p()
+    hr = _shell32.SHCreateItemFromParsingName(
+        path, None, ctypes.byref(iid), ctypes.byref(item))
+    return item if hr == 0 and item else None
+
+
+def _shell_item_path(item):
+    """取 IShellItem 的文件系统路径，并负责释放字符串和对象。"""
+    disp = ctypes.c_void_p()
+    try:
+        hr = _vcall(item, _VT_ITEM_DISPLAYNAME,
+                    [ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p)],
+                    _SIGDN_FILESYSPATH, ctypes.byref(disp))
+        return (ctypes.wstring_at(disp) or '') if hr == 0 and disp else ''
+    finally:
+        if disp:
+            _ole32.CoTaskMemFree(disp)
+        _vcall(item, _VT_RELEASE, [])
+
+
+def _modern_dialog(folders, hwnd_owner=None):
+    """弹现代对话框。返回路径列表；[] = 用户取消；None = 接口不可用需回退。"""
     if not IS_WIN:
         return None
-    # BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_NONEWFOLDERBUTTON
-    # NEWDIALOGSTYLE 才有「此电脑 / 各盘符」的完整树和可调整大小的现代界面，
-    # 这正是 Tk 自绘目录框缺的部分。
+    hr = _ole32.CoInitializeEx(None, 0x2)  # COINIT_APARTMENTTHREADED
+    if hr not in (0, 1):                    # 1 = S_FALSE（本线程已初始化）
+        return None
+    dlg = ctypes.c_void_p()
+    try:
+        clsid = _guid(_CLSID_FILE_OPEN_DIALOG)
+        iid = _guid(_IID_IFILE_OPEN_DIALOG)
+        hr = _ole32.CoCreateInstance(ctypes.byref(clsid), None, _CLSCTX_ALL,
+                                     ctypes.byref(iid), ctypes.byref(dlg))
+        if hr != 0 or not dlg:
+            log('IFileOpenDialog 创建失败 hr=%s' % hr)
+            return None
+
+        opts = _FOS_FORCEFILESYSTEM | _FOS_PATHMUSTEXIST | _FOS_NOCHANGEDIR
+        if folders:
+            opts |= _FOS_PICKFOLDERS
+        else:
+            opts |= _FOS_ALLOWMULTISELECT | _FOS_FILEMUSTEXIST
+        _vcall(dlg, _VT_SETOPTIONS, [wintypes.DWORD], opts)
+        _vcall(dlg, _VT_SETTITLE, [_LPCWSTR],
+               '选择要批量改名的文件夹' if folders else '选择要加入改名器的文件（可多选）')
+
+        # 默认打开上次选过的目录；不存在时 load_last_folder 会返回空串。
+        last = load_last_folder()
+        if last:
+            item = _shell_item_from_path(last)
+            if item:
+                _vcall(dlg, _VT_SETFOLDER, [ctypes.c_void_p], item)
+                _vcall(item, _VT_RELEASE, [])
+
+        if _vcall(dlg, _VT_SHOW, [_HWND], hwnd_owner) != 0:
+            return []                       # 取消（ERROR_CANCELLED）
+
+        if folders:
+            item = ctypes.c_void_p()
+            if _vcall(dlg, _VT_GETRESULT,
+                      [ctypes.POINTER(ctypes.c_void_p)],
+                      ctypes.byref(item)) != 0 or not item:
+                return []
+            out = [_shell_item_path(item)]
+        else:
+            arr = ctypes.c_void_p()
+            if _vcall(dlg, _VT_GETRESULTS,
+                      [ctypes.POINTER(ctypes.c_void_p)],
+                      ctypes.byref(arr)) != 0 or not arr:
+                return []
+            try:
+                n = wintypes.DWORD()
+                _vcall(arr, _VT_ARRAY_COUNT,
+                       [ctypes.POINTER(wintypes.DWORD)], ctypes.byref(n))
+                out = []
+                for i in range(n.value):
+                    item = ctypes.c_void_p()
+                    if _vcall(arr, _VT_ARRAY_ITEMAT,
+                              [wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)],
+                              i, ctypes.byref(item)) == 0 and item:
+                        out.append(_shell_item_path(item))
+            finally:
+                _vcall(arr, _VT_RELEASE, [])
+
+        out = [p for p in out if p]
+        if out:
+            first = out[0]
+            save_last_folder(first if os.path.isdir(first)
+                             else os.path.dirname(first))
+        return out
+    except Exception as e:
+        log('IFileOpenDialog 异常: %s' % e)
+        return None
+    finally:
+        if dlg:
+            _vcall(dlg, _VT_RELEASE, [])
+        _ole32.CoUninitialize()
+
+
+def _legacy_pick_folder():
+    """老式 SHBrowseForFolderW，仅在 IFileOpenDialog 不可用时兜底。"""
+    if not IS_WIN:
+        return None
     flags = 0x0001 | 0x0040 | 0x0200
-    _ole32.CoInitializeEx(None, 0x2)  # COINIT_APARTMENTTHREADED
+    _ole32.CoInitializeEx(None, 0x2)
     try:
         disp = ctypes.create_unicode_buffer(260)
         bi = BROWSEINFOW()
@@ -237,6 +421,27 @@ def pick_native_folder():
             _ole32.CoTaskMemFree(pidl)
     finally:
         _ole32.CoUninitialize()
+
+
+def pick_native_folder(hwnd_owner=None):
+    """现代文件夹对话框，返回真实路径；取消返回 None。"""
+    if not IS_WIN:
+        return None
+    res = _modern_dialog(True, hwnd_owner)
+    if res is None:
+        log('现代对话框不可用，回退 SHBrowseForFolderW')
+        return _legacy_pick_folder()
+    if res:
+        save_last_folder(res[0])
+    return res[0] if res else None
+
+
+def pick_native_files(hwnd_owner=None):
+    """现代文件对话框（可多选），返回真实路径列表。"""
+    if not IS_WIN:
+        return []
+    res = _modern_dialog(False, hwnd_owner)
+    return res or []
 
 
 # ============================================================
@@ -295,6 +500,9 @@ if IS_WIN:
 
     WM_DESTROY = 0x0002
     WM_DROPFILES = 0x0233
+    WM_COMMAND = 0x0111  # modified: 按钮点击
+    IDC_BTN_FILES = 1001  # modified
+    IDC_BTN_FOLDER = 1002  # modified
     WS_EX_TOPMOST = 0x00000008
     WS_OVERLAPPEDWINDOW = 0x00CF0000
     WS_VISIBLE = 0x10000000
@@ -335,6 +543,22 @@ def drop_window():
             if _status_hwnd[0]:
                 _user32.SetWindowTextW(_status_hwnd[0], text)
             return 0
+        if msg == WM_COMMAND:  # modified: 点按钮弹出现代对话框，选完直接加入
+            cid = wparam & 0xFFFF  # modified
+            if cid == IDC_BTN_FILES:  # modified
+                paths, tag = pick_native_files(hwnd), '文件'  # modified
+            elif cid == IDC_BTN_FOLDER:  # modified
+                d = pick_native_folder(hwnd)  # modified
+                paths, tag = ([d] if d else []), '文件夹'  # modified
+            else:  # modified
+                return 0  # modified
+            if not paths:  # modified: 用户取消，不弹第二个框、不报错
+                return 0  # modified
+            ok, text = push_paths(paths)  # modified
+            log('按钮选%s: %d 项 -> %s %s' % (tag, len(paths), ok, text))  # modified
+            if _status_hwnd[0]:  # modified
+                _user32.SetWindowTextW(_status_hwnd[0], text)  # modified
+            return 0  # modified
         if msg == WM_DESTROY:
             _user32.PostQuitMessage(0)
             return 0
@@ -362,17 +586,34 @@ def drop_window():
     hwnd = _user32.CreateWindowExW(
         WS_EX_TOPMOST, cls_name, '改名器 · 拖放助手',
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        180, 160, 460, 190, None, None, hinst, None)
+        180, 160, 470, 250, None, None, hinst, None)
     if not hwnd:
         log('CreateWindowExW 失败: %s' % ctypes.get_last_error())
         return 1
 
-    _status_hwnd[0] = _user32.CreateWindowExW(
-        0, 'Static',
-        '把文件或文件夹从资源管理器拖到这里\n'
-        '（一次可拖多个；改完关掉本窗口即可）',
-        WS_CHILD | WS_VISIBLE | SS_CENTER,
-        16, 20, 412, 110, hwnd, None, hinst, None)
+    # modified: 加两个按钮，点一下就弹现代对话框；拖放区仍保留。
+    _user32.CreateWindowExW(  # modified
+        0, 'Static', '把文件 / 文件夹从资源管理器拖进窗口任意位置',  # modified
+        WS_CHILD | WS_VISIBLE | SS_CENTER,  # modified
+        16, 14, 422, 32, hwnd, None, hinst, None)  # modified
+    btn_files = _user32.CreateWindowExW(  # modified
+        0, 'Button', '选择文件…（可多选）',  # modified
+        WS_CHILD | WS_VISIBLE,  # modified
+        24, 58, 196, 34, hwnd,  # modified
+        ctypes.c_void_p(IDC_BTN_FILES), hinst, None)  # modified
+    btn_folder = _user32.CreateWindowExW(  # modified
+        0, 'Button', '选择文件夹…',  # modified
+        WS_CHILD | WS_VISIBLE,  # modified
+        240, 58, 196, 34, hwnd,  # modified
+        ctypes.c_void_p(IDC_BTN_FOLDER), hinst, None)  # modified
+    log('按钮创建结果: files=%s folder=%s err=%s' %  # modified
+        (btn_files, btn_folder, ctypes.get_last_error()))  # modified
+    _status_hwnd[0] = _user32.CreateWindowExW(  # modified
+        0, 'Static',  # modified
+        '也可以点上面按钮直接选，选完自动加入改名器列表\n'  # modified
+        '（下次打开会默认停在本次选过的文件夹）',  # modified
+        WS_CHILD | WS_VISIBLE | SS_CENTER,  # modified
+        16, 106, 422, 76, hwnd, None, hinst, None)  # modified
     _shell32.DragAcceptFiles(hwnd, True)
     log('拖放助手窗口已启动')
 
@@ -399,6 +640,23 @@ def selftest():
                    ('OK' if getattr(_shell32, 'DragQueryFileW', None) else 'MISSING'))
         out.append('RegisterClassW: %s' %
                    ('OK' if getattr(_user32, 'RegisterClassW', None) else 'MISSING'))
+        # 只创建 COM 对象、不 Show，验证现代对话框接口在本机可用。
+        _ole32.CoInitializeEx(None, 0x2)  # modified
+        dlg = ctypes.c_void_p()  # modified
+        try:  # modified
+            clsid = _guid(_CLSID_FILE_OPEN_DIALOG)  # modified
+            iid = _guid(_IID_IFILE_OPEN_DIALOG)  # modified
+            r = _ole32.CoCreateInstance(ctypes.byref(clsid), None, _CLSCTX_ALL,  # modified
+                                        ctypes.byref(iid), ctypes.byref(dlg))  # modified
+            out.append('IFileOpenDialog: %s (hr=%s)' %  # modified
+                       ('OK' if r == 0 and dlg else 'FAIL', r))  # modified
+        except Exception as e:  # modified
+            out.append('IFileOpenDialog: FAIL %s' % e)  # modified
+        finally:  # modified
+            if dlg:  # modified
+                _vcall(dlg, _VT_RELEASE, [])  # modified
+            _ole32.CoUninitialize()  # modified
+        out.append('last_folder: %r' % load_last_folder())  # modified
     p, ping = find_server()
     out.append('server: %s' % (('port %d, bridge_rev=%s' %
                                 (p, ping.get('bridge_rev'))) if p else 'not running'))
