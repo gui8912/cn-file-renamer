@@ -747,6 +747,21 @@ function resetRules(on){
 }
 
 /* ---------------- 目录授权 ---------------- */
+// modified: tkinter 的目录选择框在 Windows 上返回正斜杠（D:/a/b），授权表里存的是反斜杠。
+// 原来直接 startsWith 会把「已被父目录授权」的子目录判成未授权，重复写入一条冗余授权。
+function normPath(s){  // modified
+  return String(s || '').toLowerCase().replace(/[\\/]+/g, '\\').replace(/\\+$/, '');  // modified
+}  // modified
+
+// modified: 判断目录是否已被某条授权覆盖（含子目录），比对到目录边界避免 D:\资料 / D:\资料备份 混淆。
+function isCoveredByRoots(p, roots){  // modified
+  const pn = normPath(p);  // modified
+  return (roots || []).some(t => {  // modified
+    const tn = normPath(t);  // modified
+    return !!tn && (pn === tn || pn.startsWith(tn + '\\'));  // modified
+  });  // modified
+}  // modified
+
 function renderAuth(){
   const box = $('authList');
   const roots = S.state.trusted_roots || [];
@@ -775,7 +790,8 @@ async function addRoot(){
     S.state.trusted_roots = r.trusted_roots;
     renderAuth();
     $('authPath').value = '';
-    toast('已授权', 'ok');
+    // modified: 授权不等于加入列表，原来只说「已授权」，用户会以为选完文件夹就该有文件。
+    toast('已授权。关闭本窗口，在顶部点「扫描」即可加入列表', 'ok');  // modified
     if(!$('path').value) $('path').value = p;
   }catch(e){ toast('授权失败：' + e.message, 'err'); }
 }
@@ -794,25 +810,21 @@ async function pickFolder(forAuth){
   try{
     const r = await api('/api/pick-folder', {});
     if(!r.ok){ toast(r.error || '未选择', 'err'); return; }
-    if(forAuth){ $('authPath').value = r.path; }
-    else {
-      $('path').value = r.path;
-      // 判断是否已被父目录覆盖，必须比对到目录边界，
-      // 否则授权了 D:\资料 时选 D:\资料备份 会被误判成"已授权"
-      const norm = s => String(s).toLowerCase().replace(/[\\/]+$/, '');
-      const pn = norm(r.path);
-      const covered = (S.state.trusted_roots || []).some(t => {
-        const tn = norm(t);
-        return pn === tn || pn.startsWith(tn + '\\');
-      });
-      if(!covered){
-        const a = await api('/api/roots/add', {path: r.path});
-        if(!a.ok) return toast(a.error || '授权失败', 'err');
-        S.state.trusted_roots = a.trusted_roots;
-        renderAuth();
-      }
-      await scan();
+    if(forAuth){  // modified
+      // modified: 原来只把路径填进输入框、不动授权，选完看不到变化，误以为「没加进去」。
+      $('authPath').value = r.path;  // modified
+      await addRoot();  // modified: 选完直接完成授权
+      return;  // modified
+    }  // modified
+    $('path').value = r.path;
+    // modified: 统一分隔符再比对，避免正斜杠路径被误判成未授权而重复入库
+    if(!isCoveredByRoots(r.path, S.state.trusted_roots)){  // modified
+      const a = await api('/api/roots/add', {path: r.path});
+      if(!a.ok) return toast(a.error || '授权失败', 'err');
+      S.state.trusted_roots = a.trusted_roots;
+      renderAuth();
     }
+    await scan();
   }catch(e){ toast('选择目录失败：' + e.message, 'err'); }
 }
 
@@ -842,7 +854,19 @@ async function scan(silent){
     }
     S.root = r.root;
     S.sid = r.sid || '';
-    if(!silent) toast(`扫描到 ${r.count} 项` + (r.truncated ? '（已达上限，仅显示部分）' : ''), 'ok');
+    // modified: 0 项时原来也报「扫描到 0 项」并标绿，筛选框残留把文件全排掉了却毫无提示，
+    // 这正是「拖放提示不在扫描范围 / 浏览选完目录列表还是空」却查不出原因的根源。
+    if(!silent){  // modified
+      const filt = (($('includePat') && $('includePat').value) || '').trim()  // modified
+                 || (($('excludePat') && $('excludePat').value) || '').trim();  // modified
+      if(r.count){  // modified
+        toast(`扫描到 ${r.count} 项` + (r.truncated ? '（已达上限，仅显示部分）' : ''), 'ok');  // modified
+      }else if(filt){  // modified
+        toast('扫描到 0 项：可能被「只包含 / 排除」筛选排除了，清空这两个框再扫描', 'err');  // modified
+      }else{  // modified
+        toast('扫描到 0 项：目录是空的，或勾选「包含子文件夹 / 包含文件夹」再试', 'err');  // modified
+      }  // modified
+    }  // modified
     if(r.count){
       await preview();
     }else{
@@ -1486,12 +1510,23 @@ async function handleDrop(e){
     names.push({name: f.name, size: f.size});
   }
   try{
-    const r = await api('/api/add-by-name', {sid: S.sid, names});
+    let r = await api('/api/add-by-name', {sid: S.sid, names});
+    // modified: 浏览器拖放只给「文件名 + 大小」，不给绝对路径；没扫描过就永远匹配不到。
+    // 清单为空但顶部路径框已有目录时，自动补扫一次再匹配，别让用户去猜为什么拖不进来。
+    if(r.ok && !r.matched && !r.total_items && $('path').value.trim()){  // modified
+      await scan(true);  // modified
+      if(S.sid) r = await api('/api/add-by-name', {sid: S.sid, names});  // modified
+    }  // modified
     if(handleStale(r)) return;
     if(!r.ok) return toast(r.error || '添加失败', 'err');
     if(!r.matched){
-      toast('这些文件不在当前扫描范围，或有多个同名候选。'
-            + '请先扫描所在目录，或 Shift+右键「复制为路径」后 Ctrl+V 粘贴。', 'err');
+      // modified: 分情况给可操作的下一步，而不是笼统一句「不在扫描范围」。
+      if(!r.total_items){  // modified
+        toast('还没扫描目录：先在顶部「浏览…」选文件夹再点「扫描」，然后拖动文件', 'err');  // modified
+      }else{  // modified
+        toast('不在当前扫描范围，或有多个同名候选。请重新扫描所在目录，'
+              + '或 Shift+右键「复制为路径」后 Ctrl+V 粘贴。', 'err');  // modified
+      }  // modified
       return;
     }
     await preview();

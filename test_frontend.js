@@ -161,6 +161,19 @@ context.fetch = async () => ({ok: true, json: async () => ({
           mtime:0, status:'ok', reason:'', selected:true, applied:[], notes:[]}]
 })});
 
+// modified: 目录框返回正斜杠时，已被父目录授权的中文子目录不能误判成「未授权」。
+const call = (fn, ...args) =>
+  run(fn + '(' + args.map(a => JSON.stringify(a)).join(',') + ')');
+assert.strictEqual(
+  call('normPath', 'D:/m3u8dl/new02/新版医疗器械GMP文件训练营'),
+  call('normPath', 'D:\\m3u8dl\\new02\\新版医疗器械GMP文件训练营'));
+assert.strictEqual(
+  call('isCoveredByRoots', 'D:/m3u8dl/new02/新版医疗器械GMP文件训练营', ['D:\\m3u8dl']),
+  true);
+assert.strictEqual(
+  call('isCoveredByRoots', 'D:/m3u8dl备份/x', ['D:\\m3u8dl']),
+  false, '目录边界必须比对到分隔符，不能把 D:\\m3u8dl备份 当成子目录');
+
 (async () => {
   run(`S.root='D:'; S.sid='s1'; S.rows=[{id:'1', path:'p1', dir:'D:',
     old_name:'a.txt', new_name:'手改.txt', ext:'.txt', status:'ok',
@@ -172,5 +185,18 @@ context.fetch = async () => ({ok: true, json: async () => ({
   assert.strictEqual(run("S.rows[0].status"), 'ok');
   run('preview = () => {}; resetManualNames();');  // 一键恢复规则计算
   assert.strictEqual(run("S.rows.some(r => r._manual)"), false);
+
+  // modified: 筛选残留把文件全排掉时，0 项必须明确点出筛选框，不能静默显示空列表。
+  context.fetch = async () => ({ok: true, json: async () => ({
+    ok: true, root: 'D:', sid: 's2', count: 0, truncated: false, items: []
+  })});
+  run('S.scanSeq=0; S.previewSeq=0; toast = (m) => { _toastMsg = m; };');
+  fakeEl('path').value = 'D:';
+  fakeEl('excludePat').value = '*.mp4';
+  await run('scan(false)');
+  assert(run('_toastMsg').includes('只包含 / 排除'), '0 项时未提示筛选残留');
+  fakeEl('excludePat').value = '';
+  await run('scan(false)');
+  assert(run('_toastMsg').includes('目录是空的'), '0 项时未区分空目录');
   console.log('frontend tests: OK');
 })().catch(e => { console.error(e); process.exitCode = 1; });
