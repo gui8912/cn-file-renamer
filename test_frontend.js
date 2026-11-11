@@ -22,14 +22,30 @@ function fakeEl(id) {
     insertAdjacentElement() {},
   });
 }
+// modified: 规则状态持久化需要 localStorage / document.cookie 的桩。
+const storage = {};
+const cookieJar = {};
 const context = {
   console,
+  localStorage: {
+    getItem(k) { return Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null; },
+    setItem(k, v) { storage[k] = String(v); },
+    removeItem(k) { delete storage[k]; },
+    _clear() { for(const k of Object.keys(storage)) delete storage[k]; },
+  },
   document: {
     addEventListener() {},
     getElementById: fakeEl,
     querySelectorAll() { return []; },
     createElement() { return fakeEl('__new_' + Math.random()); },
     createDocumentFragment() { return fakeEl('__frag'); },
+    get cookie() { return Object.keys(cookieJar).map(k => k + '=' + cookieJar[k]).join('; '); },
+    set cookie(v) {
+      const pair = String(v).split(';')[0];
+      const i = pair.indexOf('=');
+      if(i > 0) cookieJar[pair.slice(0, i).trim()] = pair.slice(i + 1);
+    },
+    _clearCookies() { for(const k of Object.keys(cookieJar)) delete cookieJar[k]; },
   },
   window: {},
   URLSearchParams,
@@ -246,7 +262,7 @@ assert.strictEqual(
   assert(run('S.root').includes('新版医疗器械GMP文件训练营'));
   assert(run('_toastMsg').includes('已加入 23 项'), '应报告加入条数');
 
-  // modified: 刷新 / 从服务台打开后，侧边栏所有规则必须默认关闭。
+  // modified: 无存档时（首次使用 / 清空浏览器数据）全关。
   // modified: 后端 default_enabled 里 7 条是 ON，UI 不能照抄。
   const stateRules = ['t2s','fullwidth','cn_num','noise','clean','date_front','trim','regex'];
   context.fetch = async () => ({ok: true, json: async () => ({
@@ -257,18 +273,56 @@ assert.strictEqual(
     rules: stateRules.map(id => ({id})),
     trusted_roots: [], lower_ext: false
   })});
+  context.localStorage._clear();
+  context.document._clearCookies();
   run('S.enabled = {t2s:true, cn_num:true}; renderRules=()=>{}; schedulePreview=()=>{}; toast=()=>{};');
   await run('boot()');
   assert.strictEqual(run('Object.keys(S.enabled).length'), stateRules.length,
                      '每条规则都要有明确的 false，不能留缺失键');
   assert(run('Object.values(S.enabled).every(v => v === false)'),
-         '刷新后必须全部关闭');
+         '无存档时从全关开始');
   assert.strictEqual(run('S.enabled.t2s'), false, '默认 ON 的繁转简也必须关掉');
 
   // modified: 会话级开关显式归零，避免浏览器刷新自行恢复表单状态。
   assert.strictEqual(fakeEl('recursive').checked, false);
   assert.strictEqual(fakeEl('includeDirs').checked, false);
   assert.strictEqual(fakeEl('autoDedupe').checked, false);
+
+  // modified: 记住上次勾选 —— 改两条规则 + 一个参数，写盘后模拟刷新恢复。
+  run('clearTimeout(_uiSaveTimer); S.persistReady = true;');
+  run(`S.enabled.cn_num = true; S.enabled.regex = true;
+       S.params.cn_num = {ordinal_single: true}; writeUiState();`);
+  assert(context.localStorage.getItem('rename-ui-state-v1'), '应写入 localStorage');
+  assert(context.document.cookie.includes('rename_rules='), 'cookie 也要写一份');
+  run(`S.enabled = allOffEnabled();
+       S.params = JSON.parse(JSON.stringify(S.state.default_params));
+       S.persistReady = false;`);
+  await run('boot()');
+  assert.strictEqual(run('S.enabled.cn_num'), true, '刷新后要恢复上次勾选的中文数字');
+  assert.strictEqual(run('S.enabled.regex'), true, '刷新后要恢复上次勾选的查找替换');
+  assert.strictEqual(run('S.enabled.t2s'), false, '没勾的仍保持关闭');
+  assert.strictEqual(run('S.params.cn_num.ordinal_single'), true, '规则参数也要一起记住');
+
+  // modified: 存档里的未知 rule id 不能混进界面（版本升级/降级）。
+  const savedUi = JSON.parse(context.localStorage.getItem('rename-ui-state-v1'));
+  savedUi.enabled.__obsolete_rule__ = true;
+  context.localStorage.setItem('rename-ui-state-v1', JSON.stringify(savedUi));
+  run('S.enabled = allOffEnabled(); S.persistReady = false;');
+  await run('boot()');
+  assert.strictEqual(run('S.enabled.__obsolete_rule__'), undefined, '未知规则 id 应被忽略');
+
+  // modified: 服务台换端口时 localStorage 读不到，cookie 里的开关要能兜底。
+  context.localStorage._clear();
+  run('S.enabled = allOffEnabled(); S.persistReady = false;');
+  await run('boot()');
+  assert.strictEqual(run('S.enabled.cn_num'), true, 'cookie 应跨端口兜底恢复开关');
+
+  // modified: 两个存储都空时回到全关。
+  context.document._clearCookies();
+  run('S.enabled = allOffEnabled(); S.persistReady = false;');
+  await run('boot()');
+  assert(run('Object.values(S.enabled).every(v => v === false)'),
+         '清空浏览器数据后从全关开始');
 
   // modified: 套用「局部映射」的旧方案时，不能从默认组合里带出没写的规则。
   run(`S.state = {default_enabled:{a:true,b:true,c:true}, default_params:{},

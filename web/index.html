@@ -325,7 +325,7 @@ details.cfg .inner{padding:0 11px 11px}
         <button class="btn sm ghost" onclick="delPreset()" title="删除当前方案">删</button>
       </div>
       <!-- modified: 默认全关要给一句可发现性说明，否则看起来像规则列表坏了 -->
-      <div class="hintline" style="margin:0;padding:6px 12px 0">默认全部关闭：勾需要的规则，或从「规则方案」一键套用。全关时预览都是「无变化」，勾上规则后才会出现「可改」条目。</div>
+      <div class="hintline" style="margin:0;padding:6px 12px 0">规则会自动记住上次勾选；首次使用或清空浏览器数据后为全关。点「全关」可清空，或从「规则方案」一键套用。</div>
       <div class="rules" id="rules"></div>
       <div class="tester">
         <input id="testName" placeholder="试一个名字，看规则效果…" spellcheck="false">
@@ -606,6 +606,7 @@ const S = {
   scanSeq: 0,
   previewSeq: 0,
   sid: '',
+  persistReady: false,  // modified: 读完存档后才允许回写，防止覆盖上次状态
 };
 
 // 服务端 max_scan 默认 5000；这里不再二次截断，否则“扫描到了却永远改不到”。
@@ -657,15 +658,79 @@ function handleStale(r){
 }
 
 /* ---------------- 初始化 ---------------- */
-// modified: 界面初始状态 = 所有规则关闭。服务台启动或刷新页面都从这个干净状态开始，
-// modified: 需要哪条自己勾，或从「规则方案」一键套用；避免刷新后 7 条默认规则
-// modified: 自动开启、把预览里的新名悄悄改掉。
-// modified: 引擎侧 rules.default_enabled() 保持不变，仍供未显式传 enabled 的
-// modified: 内部调用使用；这里只决定 UI，不动后端规则与既有测试。
+// modified: 无存档时的基线 = 全部规则关闭。引擎侧 rules.default_enabled()
+// modified: （16 条里 7 条默认 ON）只供未显式传 enabled 的内部调用，
+// modified: 不再作为界面初始状态；Python 侧零改动。
 function allOffEnabled(){  // modified
   const out = {};  // modified
   for(const r of ((S.state && S.state.rules) || [])) out[r.id] = false;  // modified
   return out;  // modified
+}  // modified
+
+// modified: 记住上次勾选的规则。localStorage 存完整状态（开关 + 参数）；
+// modified: cookie 只存开关用于跨端口兜底 —— 服务台是动态端口（8770 起自动选），
+// modified: 而 localStorage 按 origin 隔离，换端口就读不到；cookie 不区分端口。
+const UI_STATE_KEY = 'rename-ui-state-v1';  // modified
+const UI_COOKIE_KEY = 'rename_rules';  // modified
+let _uiSaveTimer = null;  // modified
+
+const knownRuleIds = () => ((S.state && S.state.rules) || []).map(r => r.id);  // modified
+
+function loadUiState(){  // modified
+  let raw = null;  // modified
+  try{ raw = localStorage.getItem(UI_STATE_KEY); }catch(e){}  // modified
+  if(raw){  // modified
+    try{  // modified
+      const d = JSON.parse(raw);  // modified
+      if(d && d.enabled && typeof d.enabled === 'object') return d;  // modified
+    }catch(e){}  // modified
+  }  // modified
+  // modified: localStorage 为空（换端口 / 清过站点数据）时用 cookie 里的开关兜底
+  try{  // modified
+    const part = String(document.cookie || '').split('; ')  // modified
+      .find(x => x.startsWith(UI_COOKIE_KEY + '='));  // modified
+    if(part){  // modified
+      const enabled = JSON.parse(  // modified
+        decodeURIComponent(part.slice(UI_COOKIE_KEY.length + 1)));  // modified
+      if(enabled && typeof enabled === 'object') return {enabled};  // modified
+    }  // modified
+  }catch(e){}  // modified
+  return null;  // modified
+}  // modified
+
+function writeUiState(){  // modified
+  if(!S.persistReady || !S.state) return;  // modified
+  const ids = knownRuleIds();  // modified
+  const enabled = {}, params = {};  // modified
+  for(const id of ids){  // modified
+    enabled[id] = !!S.enabled[id];  // modified
+    if(S.params[id]) params[id] = S.params[id];  // modified
+  }  // modified
+  try{  // modified
+    localStorage.setItem(UI_STATE_KEY, JSON.stringify({enabled, params}));  // modified
+    document.cookie = UI_COOKIE_KEY + '='  // modified
+      + encodeURIComponent(JSON.stringify(enabled))  // modified
+      + '; path=/; max-age=31536000; SameSite=Lax';  // modified
+  }catch(e){ /* 隐私模式 / 禁用存储：只是下次不记得，不影响使用 */ }  // modified
+}  // modified
+
+function saveUiState(){  // modified
+  clearTimeout(_uiSaveTimer);  // modified
+  _uiSaveTimer = setTimeout(writeUiState, 600);  // modified: 防抖，避免拖开关时反复写
+}  // modified
+
+function applyUiState(saved){  // modified
+  if(!saved) return;  // modified
+  // modified: 只认当前版本存在的规则 id：新增规则默认关，删掉的规则自动忽略
+  const ids = knownRuleIds();  // modified
+  for(const id of ids){  // modified
+    if(Object.prototype.hasOwnProperty.call(saved.enabled || {}, id))  // modified
+      S.enabled[id] = !!saved.enabled[id];  // modified
+  }  // modified
+  for(const id of Object.keys(saved.params || {})){  // modified
+    if(ids.indexOf(id) >= 0)  // modified
+      S.params[id] = Object.assign(S.params[id] || {}, saved.params[id]);  // modified
+  }  // modified
 }  // modified
 
 async function boot(){
@@ -677,16 +742,18 @@ async function boot(){
   }
   S.enabled = allOffEnabled();  // modified
   S.params = JSON.parse(JSON.stringify(S.state.default_params));
-  // modified: 浏览器刷新会自行恢复部分表单控件状态，显式归零会话级开关；
-  // modified: lowerExt 是持久化配置，仍按服务端值还原。
+  // modified: 浏览器刷新会自行恢复部分表单控件状态，显式归零会话级扫描开关；
+  // modified: 记住的是「规则」，扫描范围不跨刷新继承，避免意外递归扫全盘。
   $('recursive').checked = false;  // modified
   $('includeDirs').checked = false;  // modified
   $('autoDedupe').checked = false;  // modified
   $('lowerExt').checked = !!S.state.lower_ext;
+  applyUiState(loadUiState());  // modified: 有存档恢复上次勾选，没有则从全关开始
   renderRules();
   renderAuth();
   loadPresets();
   syncSortUI();  // modified: 初始化列头排序箭头
+  S.persistReady = true;  // modified: 读完才允许回写，防止空状态覆盖旧存档
 }
 
 function renderRules(){
@@ -916,6 +983,7 @@ async function scan(silent){
 }
 
 function schedulePreview(){
+  saveUiState();  // modified: 规则开关/参数一变就记住（内部防抖 600ms）
   clearTimeout(S.timer);
   S.timer = setTimeout(() => { if(S.root) preview(); }, 320);
   // 规则一变，测试器也跟着刷新
@@ -1393,7 +1461,7 @@ function loadPreset(){
   if(!p) return;
   // modified: 从「全部关闭」基线套用方案，而不是从引擎默认组合叠加。
   // modified: 局部映射的旧方案原本会被默认开启的 7 条规则悄悄补上，
-  // modified: 与「刷新后默认全关」不一致；enabled:{} 现在自然就是全关。
+  // modified: 与「无存档时全关」的界面基线不一致；enabled:{} 现在自然就是全关。
   S.enabled = allOffEnabled();  // modified
   for(const rid in (p.enabled || {})) S.enabled[rid] = !!p.enabled[rid];  // modified
   S.params = JSON.parse(JSON.stringify(S.state.default_params));
