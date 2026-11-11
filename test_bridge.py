@@ -10,6 +10,7 @@ import os  # modified
 import shutil  # modified
 import sys  # modified
 import tempfile  # modified
+import threading  # modified
 import unittest  # modified
 from unittest import mock  # modified
 
@@ -219,6 +220,39 @@ class ModernDialogTest(SessionMixin, unittest.TestCase):  # modified
         with mock.patch.object(bridge, '_modern_dialog', return_value=None):  # modified
             self.assertEqual(bridge.pick_native_files(), [],  # modified
                              '接口不可用应安静返回空，不能崩')  # modified
+
+
+class TopmostTest(unittest.TestCase):  # modified
+    """对话框自动置顶：持续压住 z-order，且能被 stop 事件干净停下。"""  # modified
+
+    @unittest.skipUnless(bridge.IS_WIN, 'Windows only')  # modified
+    def test_pop_to_front_repeats_until_stopped(self):  # modified
+        stop = threading.Event()  # modified
+        calls = []  # modified
+
+        def fake_setpos(hwnd, top, x, y, w, h, flags):  # modified
+            calls.append((hwnd, top, flags))  # modified
+            if len(calls) >= 3:  # modified
+                stop.set()  # modified
+            return True  # modified
+
+        with mock.patch.object(bridge._user32, 'FindWindowW',  # modified
+                               return_value=12345), \
+             mock.patch.object(bridge._user32, 'SetWindowPos',  # modified
+                               side_effect=fake_setpos), \
+             mock.patch.object(bridge._user32, 'SetForegroundWindow',  # modified
+                               return_value=True):  # modified
+            ok = bridge._pop_to_front('任意标题', stop)  # modified
+        self.assertTrue(ok)  # modified
+        self.assertGreaterEqual(len(calls), 3,  # modified
+                                'IFileDialog 会重设 z-order，必须持续置顶')  # modified
+        self.assertEqual(calls[0][0], 12345)  # modified
+        self.assertEqual(calls[0][1], bridge._HWND_TOPMOST)  # modified
+
+    def test_start_topmost_returns_controllable_event(self):  # modified
+        ev = bridge._start_topmost('不会匹配的标题')  # modified
+        self.assertTrue(hasattr(ev, 'set'))  # modified
+        ev.set()  # modified
 
 
 if __name__ == '__main__':  # modified

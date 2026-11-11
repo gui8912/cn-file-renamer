@@ -27,6 +27,7 @@ import json
 import os
 import socket
 import sys
+import threading  # modified: Show 阻塞期间用守护线程把对话框置顶
 import time
 import urllib.parse
 import urllib.request
@@ -47,6 +48,15 @@ _HANDLE = ctypes.c_void_p
 _ATOM = ctypes.c_uint16
 
 IS_WIN = os.name == 'nt'
+
+# modified: 对话框自动置顶。HWND_TOPMOST = (HWND)-1；只改 z-order，不动位置/大小。
+_HWND_TOPMOST = ctypes.c_void_p(-1)  # modified
+_SWP_NOSIZE = 0x0001  # modified
+_SWP_NOMOVE = 0x0002  # modified
+_SWP_NOACTIVATE = 0x0010  # modified: 重复置顶时不能反复抢焦点
+_DLG_TITLE_FOLDER = '选择要批量改名的文件夹'  # modified
+_DLG_TITLE_FILES = '选择要加入改名器的文件（可多选）'  # modified
+_DLG_TITLE_LEGACY = '浏览文件夹'  # modified
 
 
 def log(msg):
@@ -207,6 +217,16 @@ if IS_WIN:
     _ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
     _ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
 
+    # modified: 置顶所需的 user32 绑定
+    _user32.FindWindowW.argtypes = [_LPCWSTR, _LPCWSTR]  # modified
+    _user32.FindWindowW.restype = _HWND  # modified
+    _user32.SetWindowPos.argtypes = [  # modified
+        _HWND, _HWND, ctypes.c_int, ctypes.c_int,  # modified
+        ctypes.c_int, ctypes.c_int, wintypes.UINT]  # modified
+    _user32.SetWindowPos.restype = wintypes.BOOL  # modified
+    _user32.SetForegroundWindow.argtypes = [_HWND]  # modified
+    _user32.SetForegroundWindow.restype = wintypes.BOOL  # modified
+
 
 # ---- 现代文件/文件夹对话框：IFileOpenDialog（Vista+） ----
 # SHBrowseForFolderW 是 Win98 时代的老树形框，没有地址栏、不能搜索、不能看文件列表。
@@ -314,6 +334,41 @@ def _shell_item_path(item):
         _vcall(item, _VT_RELEASE, [])
 
 
+def _pop_to_front(title, stop):
+    """守护线程：Show 阻塞期间把刚出现的对话框置顶。
+
+    网页点「浏览」时对话框由后台子进程弹出，没有前台 owner，很容易被浏览器
+    压在下面。按「类名 #32770 + 标题」精确匹配后设 HWND_TOPMOST。
+
+    注意不能只设一次：实弹验证发现文件夹模式下 IFileDialog 在完全显示时
+    会自己重设 z-order，一次性置顶会被覆盖掉。所以在 Show 返回前持续压住
+    （每 0.12s 一次）；对话框关闭后 FindWindowW 返回空、不再操作，
+    窗口销毁时 TOPMOST 状态随之消失，不会留下残留。
+    """
+    if not IS_WIN:
+        return False
+    done = False
+    while not stop.is_set():
+        hwnd = _user32.FindWindowW('#32770', title)
+        if hwnd:
+            _user32.SetWindowPos(hwnd, _HWND_TOPMOST, 0, 0, 0, 0,
+                                 _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOACTIVATE)
+            if not done:  # 只抢一次焦点，别打断用户在对话框里输入
+                _user32.SetForegroundWindow(hwnd)
+                log('对话框已置顶: %s' % title)
+                done = True
+        time.sleep(0.12)
+    return done
+
+
+def _start_topmost(title):
+    """起守护线程，返回 stop_event；调用方在 Show 返回后 set()。"""
+    stop = threading.Event()
+    threading.Thread(target=_pop_to_front, args=(title, stop),
+                     daemon=True).start()
+    return stop
+
+
 def _modern_dialog(folders, hwnd_owner=None):
     """弹现代对话框。返回路径列表；[] = 用户取消；None = 接口不可用需回退。"""
     if not IS_WIN:
@@ -337,8 +392,8 @@ def _modern_dialog(folders, hwnd_owner=None):
         else:
             opts |= _FOS_ALLOWMULTISELECT | _FOS_FILEMUSTEXIST
         _vcall(dlg, _VT_SETOPTIONS, [wintypes.DWORD], opts)
-        _vcall(dlg, _VT_SETTITLE, [_LPCWSTR],
-               '选择要批量改名的文件夹' if folders else '选择要加入改名器的文件（可多选）')
+        title = _DLG_TITLE_FOLDER if folders else _DLG_TITLE_FILES  # modified
+        _vcall(dlg, _VT_SETTITLE, [_LPCWSTR], title)  # modified
 
         # 默认打开上次选过的目录；不存在时 load_last_folder 会返回空串。
         last = load_last_folder()
@@ -348,7 +403,12 @@ def _modern_dialog(folders, hwnd_owner=None):
                 _vcall(dlg, _VT_SETFOLDER, [ctypes.c_void_p], item)
                 _vcall(item, _VT_RELEASE, [])
 
-        if _vcall(dlg, _VT_SHOW, [_HWND], hwnd_owner) != 0:
+        stop = _start_topmost(title)  # modified: 弹出即自动置顶
+        try:  # modified
+            shown = _vcall(dlg, _VT_SHOW, [_HWND], hwnd_owner)  # modified
+        finally:  # modified
+            stop.set()  # modified
+        if shown != 0:  # modified
             return []                       # 取消（ERROR_CANCELLED）
 
         if folders:
@@ -410,7 +470,11 @@ def _legacy_pick_folder():
         bi.lpfn = None
         bi.lParam = 0
         bi.iImage = 0
-        pidl = _shell32.SHBrowseForFolderW(ctypes.byref(bi))
+        stop = _start_topmost(_DLG_TITLE_LEGACY)  # modified: 回退框同样置顶
+        try:  # modified
+            pidl = _shell32.SHBrowseForFolderW(ctypes.byref(bi))  # modified
+        finally:  # modified
+            stop.set()  # modified
         if not pidl:
             return None
         try:
@@ -640,6 +704,8 @@ def selftest():
                    ('OK' if getattr(_shell32, 'DragQueryFileW', None) else 'MISSING'))
         out.append('RegisterClassW: %s' %
                    ('OK' if getattr(_user32, 'RegisterClassW', None) else 'MISSING'))
+        out.append('topmost(SetWindowPos): %s' %  # modified
+                   ('OK' if getattr(_user32, 'SetWindowPos', None) else 'MISSING'))  # modified
         # 只创建 COM 对象、不 Show，验证现代对话框接口在本机可用。
         _ole32.CoInitializeEx(None, 0x2)  # modified
         dlg = ctypes.c_void_p()  # modified
