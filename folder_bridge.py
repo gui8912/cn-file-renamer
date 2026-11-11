@@ -131,6 +131,12 @@ def push_paths(raw_paths):
     port, ping = find_server()
     if not port:
         return False, '没找到改名器服务，请先在服务台启动'
+    # 旧版服务(<=1.2.2)的 /api/ping 没有 bridge_rev，也不会给 sid；
+    # 硬 POST 会被会话校验拒掉，抛「清单已被另一个页面更新」这种误导性错误。
+    # 直接前置说清楚：重启一次服务即可，别让用户去猜。
+    if (ping or {}).get('bridge_rev') is None:
+        return False, ('改名器服务还是旧版，请重启到 1.2.3 再拖放'
+                       '（服务台：停止 → 启动；或重开 启动.bat）')
 
     # 授权：文件取其父目录，目录取自身。系统目录由服务端拒绝，这里不重复判断。
     auth_errors = []
@@ -161,11 +167,6 @@ def push_paths(raw_paths):
     msg = '已加入 %d 项' % added
     if errs:
         msg += '；' + ' / '.join(str(x) for x in errs)
-    # 注意用 is None 判「字段是否存在」：bridge_rev 初始就是 0，
-    # 用 `if not ...` 会把恰好为 0 的新版服务误报成旧版。
-    if (ping or {}).get('bridge_rev') is None:  # modified
-        # 旧版服务还没有轮询支持：数据已经进会话，提示用户手动刷新一次即可。
-        msg += '（旧版服务，请在页面点「↻ 生成预览」）'
     log('push_paths: %d -> added=%d  %s' % (len(paths), added, msg))
     return True, msg
 

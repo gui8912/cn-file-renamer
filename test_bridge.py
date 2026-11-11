@@ -87,6 +87,18 @@ class BridgePathTest(unittest.TestCase):  # modified
                                return_value=FakeResponse(ping)):  # modified
             self.assertEqual(launcher.find_server(), 8770)  # modified
 
+    def test_push_paths_rejects_legacy_server_clearly(self):  # modified
+        # 旧服务没有 bridge_rev/sid，硬 POST 会被会话校验拒掉并给出误导性报错，
+        # 必须在发请求之前就明确告诉用户「重启服务」。
+        with mock.patch.object(bridge, 'find_server',  # modified
+                               return_value=(8770, {'ok': True,  # modified
+                                                    'app': 'rename-tool-cn'})), \
+             mock.patch.object(bridge, '_post',  # modified
+                               side_effect=AssertionError('不应向旧服务发请求')):  # modified
+            ok, msg = bridge.push_paths([os.path.abspath(__file__)])  # modified
+        self.assertFalse(ok)  # modified
+        self.assertIn('重启', msg)  # modified
+
     def test_push_paths_authorizes_before_add_and_marks_bridge(self):  # modified
         p = os.path.abspath(__file__)  # modified
         calls = []  # modified
