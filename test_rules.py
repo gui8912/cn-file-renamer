@@ -122,5 +122,40 @@ class ValidateTest(unittest.TestCase):
         self.assertEqual(text_norm.to_simplified('李喆王甯'), '李喆王甯')
 
 
+class OrdinalSingleTest(unittest.TestCase):
+    """2026-11-11：章节编号里的孤立单字可选转换（默认关闭，不破坏保守性）。"""
+
+    SAMPLE = '新版GMP体系文件训练营第十一章质量控制与产品放行 第一部分'
+
+    def test_default_keeps_conservative_behavior(self):
+        out = one('cn_num', self.SAMPLE)
+        self.assertIn('第11章', out)
+        self.assertIn('第一部分', out)
+
+    def test_enabled_converts_trailing_ordinal(self):
+        out = one('cn_num', self.SAMPLE, {'ordinal_single': True})
+        self.assertEqual(out, '新版GMP体系文件训练营第11章质量控制与产品放行 第1部分')
+
+    def test_no_false_positives(self):
+        for word in ('第一次', '第一时间', '一览表', '统一部署',
+                     '第一反应', '一致性', '第一责任人', '万一'):
+            self.assertEqual(one('cn_num', word, {'ordinal_single': True}), word)
+
+    def test_unit_char_and_other_nouns(self):
+        cases = [('第一部分', '第1部分'), ('第三章', '第3章'),
+                 ('第十集', '第10集'), ('第二版', '第2版'),
+                 ('第十章', '第10章'), ('第拾篇', '第10篇')]
+        for src, want in cases:
+            self.assertEqual(one('cn_num', src, {'ordinal_single': True}), want, src)
+
+    def test_malformed_string_does_not_enable(self):
+        self.assertEqual(one('cn_num', '第一部分', {'ordinal_single': 'false'}), '第一部分')
+
+    def test_does_not_break_existing_channels(self):
+        for src, want in [('第十一章', '第11章'), ('第一百一十章', '第110章'),
+                          ('二〇二六年', '2026年'), ('一九九八', '1998')]:
+            self.assertEqual(one('cn_num', src, {'ordinal_single': True}), want, src)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

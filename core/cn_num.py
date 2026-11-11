@@ -19,6 +19,8 @@
        三点一四 -> 3.14
 
 刻意保守：绝不替换孤立单字，所以"第一次"不会变成"第1次"。
+例外：可选开启 ordinal_single，只处理「第 + 单字数字 + 编号量词」这种
+明确编号语境（第一部分 -> 第1部分、第三章 -> 第3章），默认关闭。
 """
 
 import re
@@ -53,6 +55,17 @@ PER_RUN = re.compile('[' + DIGIT_CLS + ']{2,}')
 CAL_SINGLE = re.compile(
     r'(?<![一二三四五六七八九十百千万亿〇零])'
     r'([一二三四五六七八九十])(?=[月日号])')
+# 明确编号语境里的孤立单字：「第一部分」「第三章」「第十集」。
+# 只认「第 + 单个数字/单位字 + 编号量词」，避免误伤「第一次」「第一时间」
+# 「一览表」「统一部署」。单列出来是因为 NUM_RUN / PER_RUN 都要求 >=2 字，
+# 这些单字编号原本没有任何通道能处理。
+_ORDINAL_NOUN = (
+    '部分|单元|單元|阶段|階段|章节|章節|章|节|節|篇|卷|冊|册|条|條|款|'
+    '项|項|回|集|期|讲|講|课|課|步|幕|版|类|類|种|種|层|層|级|級|部'
+)
+ORDINAL_SINGLE = re.compile(
+    r'(第)([' + DIGIT_CLS + UNIT_CLS + r'])(?=(?:' + _ORDINAL_NOUN + r'))')  # modified
+
 # 末尾数字前是否紧跟"零"（决定要不要口语补位）
 TAIL_PAT = re.compile(r'[' + UNIT_CLS + BIG_CLS + r']([零〇○]?)[' + DIGIT_CLS + r']$')
 
@@ -207,11 +220,14 @@ def _looks_like_repeat(s):
     return False
 
 
-def convert_text(text, unit_read=True, per_digit=True, min_per_len=3, big_unit='plain'):
+def convert_text(text, unit_read=True, per_digit=True, min_per_len=3,
+                 big_unit='plain', ordinal_single=False):
     """
     把文本中的中文数字转成阿拉伯数字。
 
     big_unit: 'plain' 直接给完整数字（1100000）；'cn' 用万/亿（110万）
+    ordinal_single: 把「第 + 单字数字 + 编号量词」也转（第一部分 -> 第1部分），
+                    默认关闭，避免把「第一次」改成「第1次」。
     返回 (新文本, 变更列表)
     变更项: {'from','to','kind'}
     """
@@ -286,6 +302,21 @@ def convert_text(text, unit_read=True, per_digit=True, min_per_len=3, big_unit='
             return out
 
         text = PER_RUN.sub(_repl_per, text)
+
+    # 放在最后：前面的通道已把「第十一章」变成「第11章」，这里只处理
+    # 剩下的单字编号（第 + 一个中文字 + 量词），不会二次命中阿拉伯数字。
+    if ordinal_single:  # modified
+        def _repl_ordinal(m):  # modified
+            s = m.group(2)  # modified
+            v = parse(s)  # modified
+            if v is None:  # modified
+                return m.group(0)  # modified
+            out = str(int(v))  # modified
+            changes.append({'from': '第' + s, 'to': '第' + out,  # modified
+                            'kind': 'ordinal'})  # modified
+            return m.group(1) + out  # modified
+
+        text = ORDINAL_SINGLE.sub(_repl_ordinal, text)  # modified
 
     return text, changes
 

@@ -137,6 +137,22 @@ assert.deepStrictEqual(
   Array.from(run('splitPair(' + JSON.stringify(oddCell + ',"新名.txt"') + ')')),
   [oddName, '新名.txt']);
 
+// modified: 全选要说明「哪些行没勾上、为什么」，不能静默无反应。
+run('let _toastMsg = ""; toast = (m) => { _toastMsg = m; };');
+fakeEl('kw').value = '';
+run(`S.rows = [
+ {id:'1', path:'p1', old_name:'A.txt', new_name:'A.txt', status:'unchanged', selected:false, dir:'D:'},
+ {id:'2', path:'p2', old_name:'B.txt', new_name:'C.txt', status:'ok', selected:false, dir:'D:'},
+ {id:'3', path:'p3', old_name:'D.txt', new_name:'E.txt', status:'conflict', selected:false, dir:'D:'}
+]; refreshRenderedRows=()=>{}; updateStatFromRows=()=>{};`);
+run('checkAll(true)');
+assert.strictEqual(run("S.rows.map(r=>r.selected).join(',')"), 'false,true,false');
+assert(run('_toastMsg').includes('2 条因'), '未说明不可改的行数');
+fakeEl('kw').value = 'A';
+run('checkAll(true)');
+assert(run('_toastMsg').includes('被名称筛选隐藏'), '未说明被搜索框隐藏的行');
+fakeEl('kw').value = '';
+
 // modified: 重新预览必须保留手工名：原来只继承 selected，改一下排序/规则就静默丢掉。
 context.fetch = async () => ({ok: true, json: async () => ({
   ok: true, sid: 's1', stat: {},

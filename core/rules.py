@@ -383,6 +383,8 @@ def _r_cn_num(stem, p, ctx):
         per_digit=p.get('per_digit', True),
         min_per_len=_to_int(p.get('min_per_len'), 3),
         big_unit=p.get('big_unit', 'cn'),
+        # 只认真布尔 True，避免畸形请求里的 "false" 字符串被当成开启。
+        ordinal_single=p.get('ordinal_single', False) is True,  # modified
     )
     if changes:
         ctx.setdefault('numbers', []).extend(changes)
@@ -584,6 +586,8 @@ RULES = [
              'min': 2, 'max': 8},
             {'key': 'big_unit', 'type': 'select', 'label': '大数写法', 'default': 'cn',
              'options': [['cn', '用万/亿（110万）'], ['plain', '完整数字（1100000）']]},
+            {'key': 'ordinal_single', 'type': 'bool', 'label': '章节编号单字也转（第一部分→第1部分）',  # modified
+             'default': False},  # modified
         ], 'fn': _r_cn_num,
     },
     {

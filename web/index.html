@@ -1128,12 +1128,28 @@ function filterRows(){
 }
 
 function checkAll(on){
-  // 只勾选当前筛选后可见的行，不能把隐藏行也一起选中。
+  // 只勾选「当前可见 + 可改(status=ok)」的行：无变化 / 冲突 / 非法的行
+  // 勾了也执行不了。原来一声不吭，用户点全选没反应会以为按钮坏了，
+  // 这里把「勾了几条、剩下为什么没勾」明确说出来。
+  let picked = 0, blocked = 0, hidden = 0;  // modified
   S.rows.forEach(r => {
-    r.selected = !!(on && r.status === 'ok' && rowVisible(r));
+    const visible = rowVisible(r);  // modified
+    const can = !!(on && r.status === 'ok' && visible);  // modified
+    r.selected = can;  // modified
+    if(on){  // modified
+      if(can) picked++;  // modified
+      else if(!visible) hidden++;  // modified
+      else blocked++;  // modified
+    }
   });
   refreshRenderedRows();
   updateStatFromRows();
+  if(on){  // modified
+    const msg = ['已勾选 ' + picked + ' 条可改条目'];  // modified
+    if(blocked) msg.push(blocked + ' 条因「无变化/冲突/非法」不可改');  // modified
+    if(hidden) msg.push(hidden + ' 条被名称筛选隐藏（清空「按名称筛选」输入框可全部列出）');  // modified
+    toast(msg.join('；'), picked ? 'ok' : 'err');  // modified
+  }
 }
 
 function updateStatFromRows(){
